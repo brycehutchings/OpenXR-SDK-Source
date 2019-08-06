@@ -223,8 +223,13 @@ bool FileSysUtilsParsePathList(std::string& path_list, std::vector<std::string>&
 }
 
 bool FileSysUtilsFindFilesInPath(const std::string& path, std::vector<std::string>& files) {
+    // Contrary to all documentation and example code, the contents of a directory
+    // seem not to be found when the path ends with the directory name. A '/*' must be
+    // added to the path.
+    std::string starred_path = path + DIRECTORY_SYMBOL + "*";
+
     WIN32_FIND_DATAW file_data;
-    HANDLE file_handle = FindFirstFileW(utf8_to_wide(path).c_str(), &file_data);
+    HANDLE file_handle = FindFirstFileW(utf8_to_wide(starred_path).c_str(), &file_data);
     if (file_handle != INVALID_HANDLE_VALUE) {
         do {
             if (!(file_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {

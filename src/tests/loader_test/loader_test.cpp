@@ -248,17 +248,13 @@ void TestEnumInstanceExtensions(uint32_t& total, uint32_t& passed, uint32_t& ski
 
             // Test just runtimes
             std::vector<std::string> files;
-            std::string relative_path = "resources";
-            relative_path += TEST_DIRECTORY_SYMBOL;
-            relative_path += "runtimes";
-            if (FileSysUtilsFindFilesInPath(relative_path, files)) {
+           
+            std::string test_path;
+            FileSysUtilsGetCurrentPath(test_path);
+            test_path = test_path + TEST_DIRECTORY_SYMBOL + "resources" + TEST_DIRECTORY_SYMBOL + "runtimes";
+            if (FileSysUtilsFindFilesInPath(test_path, files)) {
                 for (std::string& cur_file : files) {
-                    std::string relative_file_name;
-                    std::string full_name;
-                    FileSysUtilsGetCurrentPath(full_name);
-                    FileSysUtilsCombinePaths("resources/runtimes", cur_file, relative_file_name);
-                    full_name += TEST_DIRECTORY_SYMBOL;
-                    full_name += relative_file_name;
+                    std::string full_name = test_path + TEST_DIRECTORY_SYMBOL + cur_file;
                     if (std::string::npos != cur_file.find("_badjson_") || std::string::npos != cur_file.find("_badnegotiate_")) {
                         // This is the "bad" runtime path.
                         FileSysUtilsGetCurrentPath(full_name);
@@ -270,7 +266,7 @@ void TestEnumInstanceExtensions(uint32_t& total, uint32_t& passed, uint32_t& ski
                         std::cout << "        JSON " << cur_file << " extension enum count query (" << subtest_name << "): ";
                         test_result =
                             xrEnumerateInstanceExtensionProperties(nullptr, in_extension_value, &out_extension_value, nullptr);
-                        if (XR_SUCCESS == test_result) {
+                        if (XR_SUCCEEDED(test_result)) {
                             std::cout << "Failed" << std::endl;
                             local_failed++;
                         } else {

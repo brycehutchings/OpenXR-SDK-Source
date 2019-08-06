@@ -168,17 +168,14 @@ XrResult ApiLayerInterface::GetInstanceExtensionProperties(const std::string& op
                 std::vector<std::unique_ptr<ApiLayerManifestFile>> exp_layer_man_files = {};
                 result = ApiLayerManifestFile::FindManifestFiles(MANIFEST_TYPE_EXPLICIT_API_LAYER, exp_layer_man_files);
                 if (XR_SUCCESS == result) {
-                    for (auto l_iter = exp_layer_man_files.begin();
-                         !exp_layer_man_files.empty() && l_iter != exp_layer_man_files.end();
-                         /* No iterate */) {
+                    for (auto exp_iter = exp_layer_man_files.begin(); exp_iter != exp_layer_man_files.end(); exp_iter++) {
                         for (std::string& enabled_layer : env_enabled_layers) {
                             // If this is an enabled layer, transfer it over to the manifest list.
-                            if (enabled_layer == (*l_iter)->LayerName()) {
-                                manifest_files.push_back(std::move(*l_iter));
+                            if (enabled_layer == (*exp_iter)->LayerName()) {
+                                manifest_files.push_back(std::move(*exp_iter));
                                 break;
                             }
                         }
-                        exp_layer_man_files.erase(l_iter);
                     }
                 }
             }
