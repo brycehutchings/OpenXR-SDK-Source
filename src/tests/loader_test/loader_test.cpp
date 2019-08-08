@@ -246,9 +246,8 @@ void TestEnumInstanceExtensions(uint32_t& total, uint32_t& passed, uint32_t& ski
                     break;
             }
 
-            // Test just runtimes
+            // Test various bad runtime json files
             std::vector<std::string> files;
-           
             std::string test_path;
             FileSysUtilsGetCurrentPath(test_path);
             test_path = test_path + TEST_DIRECTORY_SYMBOL + "resources" + TEST_DIRECTORY_SYMBOL + "runtimes";
@@ -256,7 +255,7 @@ void TestEnumInstanceExtensions(uint32_t& total, uint32_t& passed, uint32_t& ski
                 for (std::string& cur_file : files) {
                     std::string full_name = test_path + TEST_DIRECTORY_SYMBOL + cur_file;
                     if (std::string::npos != cur_file.find("_badjson_") || std::string::npos != cur_file.find("_badnegotiate_")) {
-                        // This is the "bad" runtime path.
+                        // This is a "bad" runtime path.
                         FileSysUtilsGetCurrentPath(full_name);
                         LoaderTestSetEnvironmentVariable("XR_RUNTIME_JSON", full_name);
 
@@ -273,69 +272,58 @@ void TestEnumInstanceExtensions(uint32_t& total, uint32_t& passed, uint32_t& ski
                             std::cout << "Passed" << std::endl;
                             local_passed++;
                         }
-                    } else if (std::string::npos != cur_file.find("test_runtime.json")) {
-                        // This is a "good" runtime, so it should pass with some set of results.
-                        LoaderTestSetEnvironmentVariable("XR_RUNTIME_JSON", full_name);
-                        // Save the valid runtime path for later
-                        valid_runtime_path = full_name;
+                    }
+                }
+            }
 
-                        // Query the count (should return 2)
-                        in_extension_value = 0;
-                        out_extension_value = 0;
-                        local_total++;
-                        std::cout << "        JSON " << cur_file << " extension enum count query (" << subtest_name << "): ";
-                        test_result =
-                            xrEnumerateInstanceExtensionProperties(nullptr, in_extension_value, &out_extension_value, nullptr);
-                        if (XR_SUCCESS != test_result || out_extension_value != expected_extension_count) {
-                            std::cout << "Failed" << std::endl;
-                            local_failed++;
-                        } else {
-                            std::cout << "Passed" << std::endl;
-                            local_passed++;
-                        }
+            // Test the active runtime, if installed
+            {
+                // This is a "good" runtime, so it should pass with some set of results.
+                LoaderTestUnsetEnvironmentVariable("XR_RUNTIME_JSON");
 
-                        // Get the properties
-                        properties.resize(out_extension_value);
-                        for (uint32_t prop = 0; prop < out_extension_value; ++prop) {
-                            properties[prop] = {};
-                            properties[prop].type = XR_TYPE_EXTENSION_PROPERTIES;
-                            properties[prop].next = nullptr;
-                        }
-                        in_extension_value = out_extension_value;
-                        out_extension_value = 0;
-                        local_total++;
-                        std::cout << "        JSON " << cur_file << " extension enum properties query (" << subtest_name << "): ";
-                        test_result = xrEnumerateInstanceExtensionProperties(nullptr, in_extension_value, &out_extension_value,
-                                                                             properties.data());
-                        if (XR_SUCCESS != test_result || out_extension_value != expected_extension_count) {
-                            std::cout << "Failed" << std::endl;
-                            local_failed++;
-                        } else {
-                            bool found_fake1 = false;
-                            bool found_fake2 = false;
-                            bool found_fake3 = false;
-                            for (uint32_t prop = 0; prop < properties.size(); ++prop) {
-                                std::string extension_name = properties[prop].extensionName;
-                                if ("XR_KHR_fake_ext1" && properties[prop].extensionVersion == 57) {
-                                    found_fake1 = true;
-                                    // NOTE: The layer, if it is present, has a newer version than this.  But,
-                                    //       the spec states that the layer should always lose to the runtime.
-                                    //       Therefore, the runtime version should always be returned, even with
-                                    //       the layer forced on.
-                                } else if ("XR_KHR_fake_ext2" && properties[prop].extensionVersion == 3) {
-                                    found_fake2 = true;
-                                } else if ("XR_KHR_fake_ext3" && properties[prop].extensionVersion == 42) {
-                                    found_fake3 = true;
-                                }
-                            }
-                            if (found_fake1 && found_fake2 && (test == 0 || (test == 1 && found_fake3))) {
-                                std::cout << "Passed" << std::endl;
-                                local_passed++;
-                            } else {
-                                std::cout << "Failed, missing expected extension" << std::endl;
-                                local_failed++;
-                            }
-                        }
+                // Query the count (should return 2)
+                in_extension_value = 0;
+                out_extension_value = 0;
+                local_total++;
+                std::cout << "        Active runtime extension enum count query (" << subtest_name << "): ";
+                test_result = xrEnumerateInstanceExtensionProperties(nullptr, in_extension_value, &out_extension_value, nullptr);
+                if (XR_SUCCESS != test_result) {
+                    std::cout << "Failed" << std::endl;
+                    local_failed++;
+                } else {
+                    std::cout << "Passed" << std::endl;
+                    local_passed++;
+                }
+
+                // Get the properties
+                properties.resize(out_extension_value);
+                for (uint32_t prop = 0; prop < out_extension_value; ++prop) {
+                    properties[prop] = { XR_TYPE_EXTENSION_PROPERTIES, nullptr, 0, 0 };
+                }
+                in_extension_value = out_extension_value;
+                out_extension_value = 0;
+                local_total++;
+                std::cout << "        Active runtime extension enum properties query (" << subtest_name << "): ";
+                test_result = xrEnumerateInstanceExtensionProperties(nullptr, in_extension_value, &out_extension_value,
+                                                                        properties.data());
+                if (XR_SUCCESS != test_result) {
+                    std::cout << "Failed" << std::endl;
+                    local_failed++;
+                } else {
+                    bool found_error = false;
+                    for (XrExtensionProperties prop : properties)
+                    {
+                        // Just check if extension name begins with "XR_"
+                        if (strlen(prop.extensionName) < 4 || 0 != strncmp(prop.extensionName, "XR_", 3))
+                            found_error = true;
+                    }
+
+                    if (found_error) {
+                        std::cout << "Failed, malformed extension name." << std::endl;
+                        local_failed++;
+                    } else {
+                        std::cout << "Passed" << std::endl;
+                        local_passed++;
                     }
                 }
             }
