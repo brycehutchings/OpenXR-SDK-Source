@@ -372,10 +372,10 @@ void TestEnumInstanceExtensions(uint32_t& total, uint32_t& passed, uint32_t& ski
                             xrEnumerateInstanceExtensionProperties(nullptr, in_extension_value, &out_extension_value, nullptr);
                         if (XR_SUCCEEDED(test_result)) {
                             cout << "Failed" << endl;
-                            local_failed++;
+                            local_failed++; // Success is unexpected.
                         } else {
                             cout << "Passed" << endl;
-                            local_passed++;
+                            local_passed++; // Failure is expected.
                         }
                     }
                 }
