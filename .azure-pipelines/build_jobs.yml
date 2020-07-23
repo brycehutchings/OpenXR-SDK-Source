@@ -122,14 +122,16 @@ jobs:
           $(System.DefaultWorkingDirectory)/openxr_loader `
           $(Build.SourcesDirectory)/specification/Makefile `
           $(System.DefaultWorkingDirectory)/openxr_loader_nupkg
+
     - task: NuGetCommand@2
       inputs:
         command: pack
         packagesToPack: $(System.DefaultWorkingDirectory)/openxr_loader_nupkg/OpenXR.Loader.nuspec
-        packDestination: $(System.DefaultWorkingDirectory)/
+        packDestination: $(System.DefaultWorkingDirectory)/nuget
+
     - task: PublishPipelineArtifact@1
       displayName: Publish combined artifact
       condition: succeeded()
       inputs:
-        path: $(System.DefaultWorkingDirectory)/*.nupkg
+        path: $(System.DefaultWorkingDirectory)/nuget
         artifact: NuGet
