@@ -113,3 +113,20 @@ jobs:
       inputs:
         path: $(System.DefaultWorkingDirectory)/openxr_loader
         artifact: openxr_loader_windows
+
+    - task: AzurePowerShell@4
+      displayName: Package for NuGet
+      inputs:
+        scriptPath: $(System.DefaultWorkingDirectory)/.azure-pipelines/nuget/package.ps1
+        arguments: $(System.DefaultWorkingDirectory)/openxr_loader $(Build.SourcesDirectory)/specification/Makefile $(System.DefaultWorkingDirectory)/openxr_loader_nupkg
+    - task: NuGetCommand@2
+      inputs:
+        command: pack
+        packagesToPack: $(System.DefaultWorkingDirectory)/openxr_loader_nupkg/OpenXR.Loader.nuspec
+        packDestination: $(System.DefaultWorkingDirectory)/
+    - task: PublishPipelineArtifact@1
+      displayName: Publish combined artifact
+      condition: succeeded()
+      inputs:
+        path: $(System.DefaultWorkingDirectory)/*.nupkg
+        artifact: NuGet
