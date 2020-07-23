@@ -114,12 +114,11 @@ jobs:
         path: $(System.DefaultWorkingDirectory)/openxr_loader
         artifact: openxr_loader_windows
 
-    - task: AzurePowerShell@4
+    - task: PowerShell@2
       displayName: Package for NuGet
       inputs:
-        azurePowerShellVersion: latestVersion
-        scriptPath: $(System.DefaultWorkingDirectory)/.azure-pipelines/nuget/package.ps1
-        scriptArguments:
+        filePath: $(System.DefaultWorkingDirectory)/.azure-pipelines/nuget/package.ps1
+        arguments:
           $(System.DefaultWorkingDirectory)/openxr_loader `
           $(Build.SourcesDirectory)/specification/Makefile `
           $(System.DefaultWorkingDirectory)/openxr_loader_nupkg
