@@ -117,8 +117,12 @@ jobs:
     - task: AzurePowerShell@4
       displayName: Package for NuGet
       inputs:
-        filePath: $(System.DefaultWorkingDirectory)/.azure-pipelines/nuget/package.ps1
-        arguments: $(System.DefaultWorkingDirectory)/openxr_loader $(Build.SourcesDirectory)/specification/Makefile $(System.DefaultWorkingDirectory)/openxr_loader_nupkg
+        azurePowerShellVersion: latestVersion
+        scriptPath: $(System.DefaultWorkingDirectory)/.azure-pipelines/nuget/package.ps1
+        scriptArguments:
+          $(System.DefaultWorkingDirectory)/openxr_loader `
+          $(Build.SourcesDirectory)/specification/Makefile `
+          $(System.DefaultWorkingDirectory)/openxr_loader_nupkg
     - task: NuGetCommand@2
       inputs:
         command: pack
