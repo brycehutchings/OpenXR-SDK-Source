@@ -3,12 +3,12 @@
     <Choose>
         <When Condition="'$(ApplicationType)|$(ApplicationTypeRevision)' == 'Windows Store|10.0'">
             <PropertyGroup>
-                <OpenXRLoaderBinaryRoot>$(OpenXRPackageRoot)native\$(Platform)_uwp\release</OpenXRLoaderBinaryRoot>
+                <OpenXRLoaderBinaryRoot>$(OpenXRLoaderPackageRoot)native\$(Platform)_uwp\release</OpenXRLoaderBinaryRoot>
             </PropertyGroup>
         </When>
         <Otherwise>
             <PropertyGroup>
-                <OpenXRLoaderBinaryRoot>$(OpenXRPackageRoot)native\$(Platform)\release</OpenXRLoaderBinaryRoot>
+                <OpenXRLoaderBinaryRoot>$(OpenXRLoaderPackageRoot)native\$(Platform)\release</OpenXRLoaderBinaryRoot>
             </PropertyGroup>
         </Otherwise>
     </Choose>
@@ -29,7 +29,7 @@
     </ItemGroup>
 
     <Target Name="EnsurePropsImported" BeforeTargets="PrepareForBuild">
-        <Error Condition="'$(OpenXRPackageRoot)'==''" Text="OpenXRPackageRoot property missing. Project is malformed. Try removing and re-adding the NuGet reference." />
+        <Error Condition="'$(OpenXRLoaderPackageRoot)'==''" Text="OpenXRLoaderPackageRoot property missing. Project is malformed. Try removing and re-adding the NuGet reference." />
     </Target>
 
 </Project>

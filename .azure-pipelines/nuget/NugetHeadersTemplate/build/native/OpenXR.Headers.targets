@@ -2,12 +2,12 @@
 
     <ItemDefinitionGroup>
         <ClCompile>
-            <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(OpenXRPackageRoot)include</AdditionalIncludeDirectories>
+            <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(OpenXRHeadersPackageRoot)include</AdditionalIncludeDirectories>
         </ClCompile>
     </ItemDefinitionGroup>
 
     <Target Name="EnsurePropsImported" BeforeTargets="PrepareForBuild">
-        <Error Condition="'$(OpenXRPackageRoot)'==''" Text="OpenXRPackageRoot property missing. Project is malformed. Try removing and re-adding the NuGet reference." />
+        <Error Condition="'$(OpenXRHeadersPackageRoot)'==''" Text="OpenXRHeadersPackageRoot property missing. Project is malformed. Try removing and re-adding the NuGet reference." />
     </Target>
 
 </Project>
