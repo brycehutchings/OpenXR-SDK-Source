@@ -15,7 +15,7 @@ if (-Not (Test-Path $SpecMakefile)) {
     Throw "Specification makefile not found: $SpecMakefile"
 }
 
-$NugetTemplate = Join-Path $PSScriptRoot "NugetTemplate"
+$NugetTemplate = Join-Path $PSScriptRoot "NugetHeadersTemplate"
 
 if (Test-Path $NugetStaging) {
     Remove-Item $NugetStaging -Recurse
