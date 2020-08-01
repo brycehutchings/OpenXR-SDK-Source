@@ -41,7 +41,7 @@ $xml = [xml](Get-Content $NuSpecPath)
 $nsm = New-Object Xml.XmlNamespaceManager($xml.NameTable)
 $nsm.AddNamespace("ng", "http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd")
 $xml.SelectSingleNode("/ng:package/ng:metadata/ng:version", $nsm).InnerText = $SDKVersion
-$xml.SelectSingleNode("/ng:package/ng:metadata/ng:dependencies/ng:dependency[@id='OpenXR.Header']/@version", $nsm).InnerText = $SDKVersion
+$xml.SelectSingleNode("/ng:package/ng:metadata/ng:dependencies/ng:dependency[@id='OpenXR.Headers']/@version", $nsm).InnerText = $SDKVersion
 $xml.Save($NuSpecPath)
 
 #
