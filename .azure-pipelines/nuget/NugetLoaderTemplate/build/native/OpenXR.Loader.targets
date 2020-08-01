@@ -14,9 +14,6 @@
     </Choose>
 
     <ItemDefinitionGroup>
-        <ClCompile>
-            <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(OpenXRPackageRoot)include</AdditionalIncludeDirectories>
-        </ClCompile>
         <Link>
             <AdditionalDependencies>%(AdditionalDependencies);$(OpenXRLoaderBinaryRoot)\lib\openxr_loader.lib</AdditionalDependencies>
         </Link>
