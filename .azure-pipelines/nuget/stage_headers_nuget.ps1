@@ -36,7 +36,7 @@ Copy-Item $NugetTemplate $NugetStaging -Recurse
 #
 # Update the NuSpec
 #
-$NuSpecPath = Resolve-Path (Join-Path $NugetStaging "OpenXR.Loader.nuspec")
+$NuSpecPath = Resolve-Path (Join-Path $NugetStaging "OpenXR.Headers.nuspec")
 $xml = [xml](Get-Content $NuSpecPath)
 $nsm = New-Object Xml.XmlNamespaceManager($xml.NameTable)
 $nsm.AddNamespace("ng", "http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd")
