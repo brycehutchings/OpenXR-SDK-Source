@@ -1,11 +1,13 @@
 parameters:
   sourceDir: '$(System.DefaultWorkingDirectory)'
 
-variables:
+parameters:
 - name: NuGetPackageVersionRevision
-  value: 0
+  type: number
+  default: 0
 - name: NuGetPackageVersionSuffix
-  value:
+  type: string
+  default: ""
 
 jobs:
 # Build the loader, API layers, and samples on Linux
