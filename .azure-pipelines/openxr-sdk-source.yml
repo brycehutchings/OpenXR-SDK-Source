@@ -7,21 +7,19 @@ variables:
   VULKAN_SDK_VERSION: "1.1.114.0"
 
 parameters:
-- name: NuGetPackageVersionRevision
-  type: number
-  default: 0
-- name: NuGetPackageVersionSuffix
-  type: string
-  default: ""
+- nuGetPackageVersionRevision: 0
+- nuGetPackageVersionSuffix: ''
 
 stages:
 - stage: Check
   jobs:
   - template: check_clang_format.yml
-
 - stage: Build
   jobs:
   - template: build_jobs.yml
+    parameters:
+      nuGetPackageVersionRevision: $(nuGetPackageVersionRevision)
+      nuGetPackageVersionSuffix: $(nuGetPackageVersionSuffix)
   # Build the loader documentation
   - job: loader_docs
     pool:
