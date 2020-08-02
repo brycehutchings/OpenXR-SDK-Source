@@ -22,8 +22,8 @@ stages:
   jobs:
   - template: build_jobs.yml
     parameters:
-      nuGetPackageVersionRevision: $(nuGetPackageVersionRevision)
-      nuGetPackageVersionSuffix: $(nuGetPackageVersionSuffix)
+      nuGetPackageVersionRevision: ${{ parameters.nuGetPackageVersionRevision }}
+      nuGetPackageVersionSuffix: ${{ parameters.nuGetPackageVersionSuffix }}
   # Build the loader documentation
   - job: loader_docs
     pool:

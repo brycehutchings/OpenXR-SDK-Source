@@ -124,8 +124,8 @@ jobs:
           $(System.DefaultWorkingDirectory)/openxr_loader `
           $(Build.SourcesDirectory)/specification/Makefile `
           $(System.DefaultWorkingDirectory)/openxr_loader_staging `
-          $(nuGetPackageVersionRevision) `
-          $(nuGetPackageVersionSuffix)
+          ${{ parameters.nuGetPackageVersionRevision }} `
+          ${{ parameters.nuGetPackageVersionSuffix }}
     - task: PowerShell@2
       displayName: Stage headers for NuGet
       inputs:
@@ -134,8 +134,8 @@ jobs:
           $(System.DefaultWorkingDirectory)/openxr_loader `
           $(Build.SourcesDirectory)/specification/Makefile `
           $(System.DefaultWorkingDirectory)/openxr_headers_staging `
-          $(nuGetPackageVersionRevision) `
-          $(nuGetPackageVersionSuffix)
+          ${{ parameters.nuGetPackageVersionRevision }} `
+          ${{ parameters.nuGetPackageVersionSuffix }}
     - task: NuGetCommand@2
       displayName: Package loader for NuGet
       inputs:
