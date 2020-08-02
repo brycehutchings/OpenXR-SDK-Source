@@ -7,8 +7,8 @@ variables:
   VULKAN_SDK_VERSION: "1.1.114.0"
 
 parameters:
-- nuGetPackageVersionRevision: 0
-- nuGetPackageVersionSuffix: ''
+  nuGetPackageVersionRevision: 0
+  nuGetPackageVersionSuffix: ''
 
 stages:
 - stage: Check
