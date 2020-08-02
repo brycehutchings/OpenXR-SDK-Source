@@ -4,7 +4,11 @@ param(
     [Parameter(Mandatory=$true, HelpMessage="Path to specification Makefile. Needed to extract the version")]
     $SpecMakefile,
     [Parameter(Mandatory=$true, HelpMessage="Path create staged nuget directory layout")]
-    $NugetStaging)
+    $NugetStaging,
+    [Parameter(HelpMessage="Version revision number")]
+    $VersionRevision = "0",
+    [Parameter(HelpMessage="Version suffix")]
+    $VersionSuffix)
 
 $ErrorActionPreference = "Stop"
 
@@ -26,6 +30,12 @@ if (Test-Path $NugetStaging) {
 #
 $VersionMatch = Select-String -Path $SpecMakefile -Pattern "^SPECREVISION\s*=\s*(.+)"
 $SDKVersion = $VersionMatch.Matches[0].Groups[1]
+
+# Append on the revision and optional suffix
+$SDKVersion = "$SDKVersion.$VersionRevision"
+if ($VersionSuffix) {
+    $SDKVersion = "$SDKVersion-$VersionSuffix"
+}
 
 #
 # Start off using the NuGet template.
