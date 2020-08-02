@@ -6,6 +6,14 @@ trigger:
 variables:
   VULKAN_SDK_VERSION: "1.1.114.0"
 
+parameters:
+- name: NuGetPackageVersionRevision
+  type: number
+  default: 0
+- name: NuGetPackageVersionSuffix
+  type: string
+  default: ""
+
 stages:
 - stage: Check
   jobs:
