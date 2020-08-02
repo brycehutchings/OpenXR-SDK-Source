@@ -1,7 +1,6 @@
 parameters:
   sourceDir: '$(System.DefaultWorkingDirectory)'
   nuGetPackageVersionRevision: 0
-  nuGetPackageVersionSuffix: ''
 
 jobs:
 # Build the loader, API layers, and samples on Linux
@@ -124,8 +123,7 @@ jobs:
           $(System.DefaultWorkingDirectory)/openxr_loader `
           $(Build.SourcesDirectory)/specification/Makefile `
           $(System.DefaultWorkingDirectory)/openxr_loader_staging `
-          '${{ parameters.nuGetPackageVersionRevision }}' `
-          '${{ parameters.nuGetPackageVersionSuffix }}'
+          '${{parameters.nuGetPackageVersionRevision}}'
     - task: PowerShell@2
       displayName: Stage headers for NuGet
       inputs:
@@ -134,8 +132,7 @@ jobs:
           $(System.DefaultWorkingDirectory)/openxr_loader `
           $(Build.SourcesDirectory)/specification/Makefile `
           $(System.DefaultWorkingDirectory)/openxr_headers_staging `
-          '${{ parameters.nuGetPackageVersionRevision }}' `
-          '${{ parameters.nuGetPackageVersionSuffix }}'
+          '${{parameters.nuGetPackageVersionRevision}}'
     - task: NuGetCommand@2
       displayName: Package loader for NuGet
       inputs:

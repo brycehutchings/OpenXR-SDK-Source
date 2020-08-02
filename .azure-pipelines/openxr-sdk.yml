@@ -5,6 +5,11 @@ trigger:
     include:
       - '*'
 
+parameters:
+- name: NuGetPackageVersionRevision
+  type: number
+  default: 0
+
 stages:
 - stage: Build
   jobs:
