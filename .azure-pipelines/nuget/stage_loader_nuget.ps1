@@ -66,9 +66,10 @@ function CopyLoader($Platform)
     Copy-Item (Join-Path $PlatformSDKPath "bin/openxr_loader.dll") $NugetBinPath
 }
 
-# Currently there are no non-UWP ARM/ARM64 binaries available from the SDK release.
 CopyLoader "x64"
 CopyLoader "Win32"
+CopyLoader "arm64"
+CopyLoader "arm"
 CopyLoader "x64_uwp"
 CopyLoader "Win32_uwp"
 CopyLoader "arm64_uwp"
