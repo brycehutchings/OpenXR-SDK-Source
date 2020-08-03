@@ -32,7 +32,7 @@ include(StdFilesystemFlags)
 ### Dependencies
 
 # CMake will detect OpenGL/Vulkan which are not compatible with UWP and ARM/ARM64 on Windows so skip it in these cases.
-string(TOUPPER ${CMAKE_GENERATOR_PLATFORM} CMAKE_GENERATOR_PLATFORM_UPPER)
+string(TOUPPER "${CMAKE_GENERATOR_PLATFORM}" CMAKE_GENERATOR_PLATFORM_UPPER)
 if(CMAKE_SYSTEM_NAME STREQUAL "WindowsStore" OR (WIN32 AND CMAKE_GENERATOR_PLATFORM_UPPER MATCHES "ARM.*"))
     set(OPENGL_INCOMPATIBLE TRUE)
     set(VULKAN_INCOMPATIBLE TRUE)
