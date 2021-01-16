@@ -42,6 +42,8 @@ if(BUILD_FORCE_GENERATION AND NOT PYTHON_EXECUTABLE)
     message(FATAL_ERROR "BUILD_FORCE_GENERATION requires Python")
 endif()
 
+add_subdirectory(DiligentEngine)
+
 add_subdirectory(include)
 add_subdirectory(src)
 
