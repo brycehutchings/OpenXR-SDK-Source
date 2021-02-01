@@ -177,11 +177,9 @@ void android_main(struct android_app* app) {
 
         // Create platform-specific implementation.
         std::shared_ptr<IPlatformPlugin> platformPlugin = CreatePlatformPlugin(options, data);
-        // Create graphics API implementation.
-        std::shared_ptr<IGraphicsPlugin> graphicsPlugin = CreateGraphicsPlugin(options, platformPlugin);
 
         // Initialize the OpenXR program.
-        std::shared_ptr<IOpenXrProgram> program = CreateOpenXrProgram(options, platformPlugin, graphicsPlugin);
+        std::shared_ptr<IOpenXrProgram> program = CreateOpenXrProgram(options, platformPlugin);
 
         // Initialize the loader for this platform
         PFN_xrInitializeLoaderKHR initializeLoader = nullptr;
@@ -261,11 +259,8 @@ int main(int argc, char* argv[]) {
             // Create platform-specific implementation.
             std::shared_ptr<IPlatformPlugin> platformPlugin = CreatePlatformPlugin(options, data);
 
-            // Create graphics API implementation.
-            std::shared_ptr<IGraphicsPlugin> graphicsPlugin = CreateGraphicsPlugin(options, platformPlugin);
-
             // Initialize the OpenXR program.
-            std::shared_ptr<IOpenXrProgram> program = CreateOpenXrProgram(options, platformPlugin, graphicsPlugin);
+            std::shared_ptr<IOpenXrProgram> program = CreateOpenXrProgram(options, platformPlugin);
 
             program->CreateInstance();
             program->InitializeSystem();

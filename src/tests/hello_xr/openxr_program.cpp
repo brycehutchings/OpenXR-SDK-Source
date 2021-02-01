@@ -12,12 +12,33 @@
 #include <common/xr_linear.h>
 #include <array>
 #include <cmath>
+#include "geometry.h"
+#include "Common/interface/BasicMath.hpp"
+#include "Common/interface/RefCntAutoPtr.hpp"
+#include "Graphics/GraphicsTools/interface/MapHelper.hpp"
+#include "Graphics/GraphicsEngine/interface/RenderDevice.h"
+#include "Graphics/GraphicsEngine/interface/DeviceContext.h"
+
+using namespace Diligent;
 
 namespace {
 
 #if !defined(XR_USE_PLATFORM_WIN32)
 #define strcpy_s(dest, source) strncpy((dest), (source), sizeof(dest))
 #endif
+
+struct Swapchain {
+    XrSwapchain handle;
+    std::vector<RefCntAutoPtr<ITexture>> textures;
+    std::vector<RefCntAutoPtr<ITextureView>> textureRtvs;
+    int32_t width;
+    int32_t height;
+};
+
+struct Cube {
+    XrPosef Pose;
+    XrVector3f Scale;
+};
 
 namespace Side {
 const int LEFT = 0;
@@ -120,9 +141,8 @@ inline XrReferenceSpaceCreateInfo GetXrReferenceSpaceCreateInfo(const std::strin
 }
 
 struct OpenXrProgram : IOpenXrProgram {
-    OpenXrProgram(const std::shared_ptr<Options>& options, const std::shared_ptr<IPlatformPlugin>& platformPlugin,
-                  const std::shared_ptr<IGraphicsPlugin>& graphicsPlugin)
-        : m_options(options), m_platformPlugin(platformPlugin), m_graphicsPlugin(graphicsPlugin) {}
+    OpenXrProgram(const std::shared_ptr<Options>& options, const std::shared_ptr<IPlatformPlugin>& platformPlugin)
+        : m_options(options), m_platformPlugin(platformPlugin) {}
 
     ~OpenXrProgram() override {
         if (m_input.actionSet != XR_NULL_HANDLE) {
@@ -157,15 +177,15 @@ struct OpenXrProgram : IOpenXrProgram {
         // Write out extension properties for a given layer.
         const auto logExtensions = [](const char* layerName, int indent = 0) {
             uint32_t instanceExtensionCount;
-            CHECK_XRCMD(xrEnumerateInstanceExtensionProperties(layerName, 0, &instanceExtensionCount, nullptr));
+            HXR_CHECK_XRCMD(xrEnumerateInstanceExtensionProperties(layerName, 0, &instanceExtensionCount, nullptr));
 
             std::vector<XrExtensionProperties> extensions(instanceExtensionCount);
             for (XrExtensionProperties& extension : extensions) {
                 extension.type = XR_TYPE_EXTENSION_PROPERTIES;
             }
 
-            CHECK_XRCMD(xrEnumerateInstanceExtensionProperties(layerName, (uint32_t)extensions.size(), &instanceExtensionCount,
-                                                               extensions.data()));
+            HXR_CHECK_XRCMD(xrEnumerateInstanceExtensionProperties(layerName, (uint32_t)extensions.size(), &instanceExtensionCount,
+                                                                   extensions.data()));
 
             const std::string indentStr(indent, ' ');
             Log::Write(Log::Level::Verbose, Fmt("%sAvailable Extensions: (%d)", indentStr.c_str(), instanceExtensionCount));
@@ -181,14 +201,14 @@ struct OpenXrProgram : IOpenXrProgram {
         // Log layers and any of their extensions.
         {
             uint32_t layerCount;
-            CHECK_XRCMD(xrEnumerateApiLayerProperties(0, &layerCount, nullptr));
+            HXR_CHECK_XRCMD(xrEnumerateApiLayerProperties(0, &layerCount, nullptr));
 
             std::vector<XrApiLayerProperties> layers(layerCount);
             for (XrApiLayerProperties& layer : layers) {
                 layer.type = XR_TYPE_API_LAYER_PROPERTIES;
             }
 
-            CHECK_XRCMD(xrEnumerateApiLayerProperties((uint32_t)layers.size(), &layerCount, layers.data()));
+            HXR_CHECK_XRCMD(xrEnumerateApiLayerProperties((uint32_t)layers.size(), &layerCount, layers.data()));
 
             Log::Write(Log::Level::Info, Fmt("Available Layers: (%d)", layerCount));
             for (const XrApiLayerProperties& layer : layers) {
@@ -201,17 +221,17 @@ struct OpenXrProgram : IOpenXrProgram {
     }
 
     void LogInstanceInfo() {
-        CHECK(m_instance != XR_NULL_HANDLE);
+        HXR_CHECK(m_instance != XR_NULL_HANDLE);
 
         XrInstanceProperties instanceProperties{XR_TYPE_INSTANCE_PROPERTIES};
-        CHECK_XRCMD(xrGetInstanceProperties(m_instance, &instanceProperties));
+        HXR_CHECK_XRCMD(xrGetInstanceProperties(m_instance, &instanceProperties));
 
         Log::Write(Log::Level::Info, Fmt("Instance RuntimeName=%s RuntimeVersion=%s", instanceProperties.runtimeName,
                                          GetXrVersionString(instanceProperties.runtimeVersion).c_str()));
     }
 
     void CreateInstanceInternal() {
-        CHECK(m_instance == XR_NULL_HANDLE);
+        HXR_CHECK(m_instance == XR_NULL_HANDLE);
 
         // Create union of extensions required by platform and graphics plugins.
         std::vector<const char*> extensions;
@@ -220,7 +240,13 @@ struct OpenXrProgram : IOpenXrProgram {
         const std::vector<std::string> platformExtensions = m_platformPlugin->GetInstanceExtensions();
         std::transform(platformExtensions.begin(), platformExtensions.end(), std::back_inserter(extensions),
                        [](const std::string& ext) { return ext.c_str(); });
-        const std::vector<std::string> graphicsExtensions = m_graphicsPlugin->GetInstanceExtensions();
+
+        // HACK !!
+        const std::vector<std::string> graphicsExtensions = {
+            XR_KHR_D3D11_ENABLE_EXTENSION_NAME,  // a
+            // XR_KHR_D3D12_ENABLE_EXTENSION_NAME,   // b
+            // XR_KHR_VULKAN_ENABLE_EXTENSION_NAME,  // c
+        };
         std::transform(graphicsExtensions.begin(), graphicsExtensions.end(), std::back_inserter(extensions),
                        [](const std::string& ext) { return ext.c_str(); });
 
@@ -232,7 +258,7 @@ struct OpenXrProgram : IOpenXrProgram {
         strcpy(createInfo.applicationInfo.applicationName, "HelloXR");
         createInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
 
-        CHECK_XRCMD(xrCreateInstance(&createInfo, &m_instance));
+        HXR_CHECK_XRCMD(xrCreateInstance(&createInfo, &m_instance));
     }
 
     void CreateInstance() override {
@@ -244,15 +270,15 @@ struct OpenXrProgram : IOpenXrProgram {
     }
 
     void LogViewConfigurations() {
-        CHECK(m_instance != XR_NULL_HANDLE);
-        CHECK(m_systemId != XR_NULL_SYSTEM_ID);
+        HXR_CHECK(m_instance != XR_NULL_HANDLE);
+        HXR_CHECK(m_systemId != XR_NULL_SYSTEM_ID);
 
         uint32_t viewConfigTypeCount;
-        CHECK_XRCMD(xrEnumerateViewConfigurations(m_instance, m_systemId, 0, &viewConfigTypeCount, nullptr));
+        HXR_CHECK_XRCMD(xrEnumerateViewConfigurations(m_instance, m_systemId, 0, &viewConfigTypeCount, nullptr));
         std::vector<XrViewConfigurationType> viewConfigTypes(viewConfigTypeCount);
-        CHECK_XRCMD(xrEnumerateViewConfigurations(m_instance, m_systemId, viewConfigTypeCount, &viewConfigTypeCount,
-                                                  viewConfigTypes.data()));
-        CHECK((uint32_t)viewConfigTypes.size() == viewConfigTypeCount);
+        HXR_CHECK_XRCMD(xrEnumerateViewConfigurations(m_instance, m_systemId, viewConfigTypeCount, &viewConfigTypeCount,
+                                                      viewConfigTypes.data()));
+        HXR_CHECK((uint32_t)viewConfigTypes.size() == viewConfigTypeCount);
 
         Log::Write(Log::Level::Info, Fmt("Available View Configuration Types: (%d)", viewConfigTypeCount));
         for (XrViewConfigurationType viewConfigType : viewConfigTypes) {
@@ -260,16 +286,16 @@ struct OpenXrProgram : IOpenXrProgram {
                                                 viewConfigType == m_viewConfigType ? "(Selected)" : ""));
 
             XrViewConfigurationProperties viewConfigProperties{XR_TYPE_VIEW_CONFIGURATION_PROPERTIES};
-            CHECK_XRCMD(xrGetViewConfigurationProperties(m_instance, m_systemId, viewConfigType, &viewConfigProperties));
+            HXR_CHECK_XRCMD(xrGetViewConfigurationProperties(m_instance, m_systemId, viewConfigType, &viewConfigProperties));
 
             Log::Write(Log::Level::Verbose,
                        Fmt("  View configuration FovMutable=%s", viewConfigProperties.fovMutable == XR_TRUE ? "True" : "False"));
 
             uint32_t viewCount;
-            CHECK_XRCMD(xrEnumerateViewConfigurationViews(m_instance, m_systemId, viewConfigType, 0, &viewCount, nullptr));
+            HXR_CHECK_XRCMD(xrEnumerateViewConfigurationViews(m_instance, m_systemId, viewConfigType, 0, &viewCount, nullptr));
             if (viewCount > 0) {
                 std::vector<XrViewConfigurationView> views(viewCount, {XR_TYPE_VIEW_CONFIGURATION_VIEW});
-                CHECK_XRCMD(
+                HXR_CHECK_XRCMD(
                     xrEnumerateViewConfigurationViews(m_instance, m_systemId, viewConfigType, viewCount, &viewCount, views.data()));
 
                 for (uint32_t i = 0; i < views.size(); i++) {
@@ -291,17 +317,17 @@ struct OpenXrProgram : IOpenXrProgram {
     }
 
     void LogEnvironmentBlendMode(XrViewConfigurationType type) {
-        CHECK(m_instance != XR_NULL_HANDLE);
-        CHECK(m_systemId != 0);
+        HXR_CHECK(m_instance != XR_NULL_HANDLE);
+        HXR_CHECK(m_systemId != 0);
 
         uint32_t count;
-        CHECK_XRCMD(xrEnumerateEnvironmentBlendModes(m_instance, m_systemId, type, 0, &count, nullptr));
-        CHECK(count > 0);
+        HXR_CHECK_XRCMD(xrEnumerateEnvironmentBlendModes(m_instance, m_systemId, type, 0, &count, nullptr));
+        HXR_CHECK(count > 0);
 
         Log::Write(Log::Level::Info, Fmt("Available Environment Blend Mode count : (%d)", count));
 
         std::vector<XrEnvironmentBlendMode> blendModes(count);
-        CHECK_XRCMD(xrEnumerateEnvironmentBlendModes(m_instance, m_systemId, type, count, &count, blendModes.data()));
+        HXR_CHECK_XRCMD(xrEnumerateEnvironmentBlendModes(m_instance, m_systemId, type, count, &count, blendModes.data()));
 
         bool blendModeFound = false;
         for (XrEnvironmentBlendMode mode : blendModes) {
@@ -310,12 +336,12 @@ struct OpenXrProgram : IOpenXrProgram {
                        Fmt("Environment Blend Mode (%s) : %s", to_string(mode), blendModeMatch ? "(Selected)" : ""));
             blendModeFound |= blendModeMatch;
         }
-        CHECK(blendModeFound);
+        HXR_CHECK(blendModeFound);
     }
 
     void InitializeSystem() override {
-        CHECK(m_instance != XR_NULL_HANDLE);
-        CHECK(m_systemId == XR_NULL_SYSTEM_ID);
+        HXR_CHECK(m_instance != XR_NULL_HANDLE);
+        HXR_CHECK(m_systemId == XR_NULL_SYSTEM_ID);
 
         m_formFactor = GetXrFormFactor(m_options->FormFactor);
         m_viewConfigType = GetXrViewConfigurationType(m_options->ViewConfiguration);
@@ -323,26 +349,28 @@ struct OpenXrProgram : IOpenXrProgram {
 
         XrSystemGetInfo systemInfo{XR_TYPE_SYSTEM_GET_INFO};
         systemInfo.formFactor = m_formFactor;
-        CHECK_XRCMD(xrGetSystem(m_instance, &systemInfo, &m_systemId));
+        HXR_CHECK_XRCMD(xrGetSystem(m_instance, &systemInfo, &m_systemId));
 
         Log::Write(Log::Level::Verbose, Fmt("Using system %d for form factor %s", m_systemId, to_string(m_formFactor)));
-        CHECK(m_instance != XR_NULL_HANDLE);
-        CHECK(m_systemId != XR_NULL_SYSTEM_ID);
+        HXR_CHECK(m_instance != XR_NULL_HANDLE);
+        HXR_CHECK(m_systemId != XR_NULL_SYSTEM_ID);
 
         LogViewConfigurations();
 
         // The graphics API can initialize the graphics device now that the systemId and instance
         // handle are available.
-        m_graphicsPlugin->InitializeDevice(m_instance, m_systemId);
+        m_graphicsPlugin = TryCreateD3D11Interop(m_instance, m_systemId);
+        // m_graphicsPlugin = TryCreateD3D12Interop(m_instance, m_systemId);
+        // m_graphicsPlugin = TryCreateVulkanInterop(m_instance, m_systemId);
     }
 
     void LogReferenceSpaces() {
-        CHECK(m_session != XR_NULL_HANDLE);
+        HXR_CHECK(m_session != XR_NULL_HANDLE);
 
         uint32_t spaceCount;
-        CHECK_XRCMD(xrEnumerateReferenceSpaces(m_session, 0, &spaceCount, nullptr));
+        HXR_CHECK_XRCMD(xrEnumerateReferenceSpaces(m_session, 0, &spaceCount, nullptr));
         std::vector<XrReferenceSpaceType> spaces(spaceCount);
-        CHECK_XRCMD(xrEnumerateReferenceSpaces(m_session, spaceCount, &spaceCount, spaces.data()));
+        HXR_CHECK_XRCMD(xrEnumerateReferenceSpaces(m_session, spaceCount, &spaceCount, spaces.data()));
 
         Log::Write(Log::Level::Info, Fmt("Available reference spaces: %d", spaceCount));
         for (XrReferenceSpaceType space : spaces) {
@@ -369,12 +397,12 @@ struct OpenXrProgram : IOpenXrProgram {
             strcpy_s(actionSetInfo.actionSetName, "gameplay");
             strcpy_s(actionSetInfo.localizedActionSetName, "Gameplay");
             actionSetInfo.priority = 0;
-            CHECK_XRCMD(xrCreateActionSet(m_instance, &actionSetInfo, &m_input.actionSet));
+            HXR_CHECK_XRCMD(xrCreateActionSet(m_instance, &actionSetInfo, &m_input.actionSet));
         }
 
         // Get the XrPath for the left and right hands - we will use them as subaction paths.
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left", &m_input.handSubactionPath[Side::LEFT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right", &m_input.handSubactionPath[Side::RIGHT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left", &m_input.handSubactionPath[Side::LEFT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right", &m_input.handSubactionPath[Side::RIGHT]));
 
         // Create actions.
         {
@@ -385,7 +413,7 @@ struct OpenXrProgram : IOpenXrProgram {
             strcpy_s(actionInfo.localizedActionName, "Grab Object");
             actionInfo.countSubactionPaths = uint32_t(m_input.handSubactionPath.size());
             actionInfo.subactionPaths = m_input.handSubactionPath.data();
-            CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.grabAction));
+            HXR_CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.grabAction));
 
             // Create an input action getting the left and right hand poses.
             actionInfo.actionType = XR_ACTION_TYPE_POSE_INPUT;
@@ -393,7 +421,7 @@ struct OpenXrProgram : IOpenXrProgram {
             strcpy_s(actionInfo.localizedActionName, "Hand Pose");
             actionInfo.countSubactionPaths = uint32_t(m_input.handSubactionPath.size());
             actionInfo.subactionPaths = m_input.handSubactionPath.data();
-            CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.poseAction));
+            HXR_CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.poseAction));
 
             // Create output actions for vibrating the left and right controller.
             actionInfo.actionType = XR_ACTION_TYPE_VIBRATION_OUTPUT;
@@ -401,7 +429,7 @@ struct OpenXrProgram : IOpenXrProgram {
             strcpy_s(actionInfo.localizedActionName, "Vibrate Hand");
             actionInfo.countSubactionPaths = uint32_t(m_input.handSubactionPath.size());
             actionInfo.subactionPaths = m_input.handSubactionPath.data();
-            CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.vibrateAction));
+            HXR_CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.vibrateAction));
 
             // Create input actions for quitting the session using the left and right controller.
             // Since it doesn't matter which hand did this, we do not specify subaction paths for it.
@@ -411,7 +439,7 @@ struct OpenXrProgram : IOpenXrProgram {
             strcpy_s(actionInfo.localizedActionName, "Quit Session");
             actionInfo.countSubactionPaths = 0;
             actionInfo.subactionPaths = nullptr;
-            CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.quitAction));
+            HXR_CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.quitAction));
         }
 
         std::array<XrPath, Side::COUNT> selectPath;
@@ -423,28 +451,28 @@ struct OpenXrProgram : IOpenXrProgram {
         std::array<XrPath, Side::COUNT> menuClickPath;
         std::array<XrPath, Side::COUNT> bClickPath;
         std::array<XrPath, Side::COUNT> triggerValuePath;
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/select/click", &selectPath[Side::LEFT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/select/click", &selectPath[Side::RIGHT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/value", &squeezeValuePath[Side::LEFT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/value", &squeezeValuePath[Side::RIGHT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/force", &squeezeForcePath[Side::LEFT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/force", &squeezeForcePath[Side::RIGHT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/click", &squeezeClickPath[Side::LEFT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/click", &squeezeClickPath[Side::RIGHT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/grip/pose", &posePath[Side::LEFT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/grip/pose", &posePath[Side::RIGHT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/output/haptic", &hapticPath[Side::LEFT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/output/haptic", &hapticPath[Side::RIGHT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/menu/click", &menuClickPath[Side::LEFT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/menu/click", &menuClickPath[Side::RIGHT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/b/click", &bClickPath[Side::LEFT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/b/click", &bClickPath[Side::RIGHT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &triggerValuePath[Side::LEFT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trigger/value", &triggerValuePath[Side::RIGHT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/select/click", &selectPath[Side::LEFT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/select/click", &selectPath[Side::RIGHT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/value", &squeezeValuePath[Side::LEFT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/value", &squeezeValuePath[Side::RIGHT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/force", &squeezeForcePath[Side::LEFT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/force", &squeezeForcePath[Side::RIGHT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/click", &squeezeClickPath[Side::LEFT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/click", &squeezeClickPath[Side::RIGHT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/grip/pose", &posePath[Side::LEFT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/grip/pose", &posePath[Side::RIGHT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/output/haptic", &hapticPath[Side::LEFT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/output/haptic", &hapticPath[Side::RIGHT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/menu/click", &menuClickPath[Side::LEFT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/menu/click", &menuClickPath[Side::RIGHT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/b/click", &bClickPath[Side::LEFT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/b/click", &bClickPath[Side::RIGHT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &triggerValuePath[Side::LEFT]));
+        HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trigger/value", &triggerValuePath[Side::RIGHT]));
         // Suggest bindings for KHR Simple.
         {
             XrPath khrSimpleInteractionProfilePath;
-            CHECK_XRCMD(
+            HXR_CHECK_XRCMD(
                 xrStringToPath(m_instance, "/interaction_profiles/khr/simple_controller", &khrSimpleInteractionProfilePath));
             std::vector<XrActionSuggestedBinding> bindings{{// Fall back to a click input for the grab action.
                                                             {m_input.grabAction, selectPath[Side::LEFT]},
@@ -459,12 +487,12 @@ struct OpenXrProgram : IOpenXrProgram {
             suggestedBindings.interactionProfile = khrSimpleInteractionProfilePath;
             suggestedBindings.suggestedBindings = bindings.data();
             suggestedBindings.countSuggestedBindings = (uint32_t)bindings.size();
-            CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
+            HXR_CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
         }
         // Suggest bindings for the Oculus Touch.
         {
             XrPath oculusTouchInteractionProfilePath;
-            CHECK_XRCMD(
+            HXR_CHECK_XRCMD(
                 xrStringToPath(m_instance, "/interaction_profiles/oculus/touch_controller", &oculusTouchInteractionProfilePath));
             std::vector<XrActionSuggestedBinding> bindings{{{m_input.grabAction, squeezeValuePath[Side::LEFT]},
                                                             {m_input.grabAction, squeezeValuePath[Side::RIGHT]},
@@ -477,12 +505,12 @@ struct OpenXrProgram : IOpenXrProgram {
             suggestedBindings.interactionProfile = oculusTouchInteractionProfilePath;
             suggestedBindings.suggestedBindings = bindings.data();
             suggestedBindings.countSuggestedBindings = (uint32_t)bindings.size();
-            CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
+            HXR_CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
         }
         // Suggest bindings for the Vive Controller.
         {
             XrPath viveControllerInteractionProfilePath;
-            CHECK_XRCMD(
+            HXR_CHECK_XRCMD(
                 xrStringToPath(m_instance, "/interaction_profiles/htc/vive_controller", &viveControllerInteractionProfilePath));
             std::vector<XrActionSuggestedBinding> bindings{{{m_input.grabAction, triggerValuePath[Side::LEFT]},
                                                             {m_input.grabAction, triggerValuePath[Side::RIGHT]},
@@ -496,13 +524,13 @@ struct OpenXrProgram : IOpenXrProgram {
             suggestedBindings.interactionProfile = viveControllerInteractionProfilePath;
             suggestedBindings.suggestedBindings = bindings.data();
             suggestedBindings.countSuggestedBindings = (uint32_t)bindings.size();
-            CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
+            HXR_CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
         }
 
         // Suggest bindings for the Valve Index Controller.
         {
             XrPath indexControllerInteractionProfilePath;
-            CHECK_XRCMD(
+            HXR_CHECK_XRCMD(
                 xrStringToPath(m_instance, "/interaction_profiles/valve/index_controller", &indexControllerInteractionProfilePath));
             std::vector<XrActionSuggestedBinding> bindings{{{m_input.grabAction, squeezeForcePath[Side::LEFT]},
                                                             {m_input.grabAction, squeezeForcePath[Side::RIGHT]},
@@ -516,14 +544,14 @@ struct OpenXrProgram : IOpenXrProgram {
             suggestedBindings.interactionProfile = indexControllerInteractionProfilePath;
             suggestedBindings.suggestedBindings = bindings.data();
             suggestedBindings.countSuggestedBindings = (uint32_t)bindings.size();
-            CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
+            HXR_CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
         }
 
         // Suggest bindings for the Microsoft Mixed Reality Motion Controller.
         {
             XrPath microsoftMixedRealityInteractionProfilePath;
-            CHECK_XRCMD(xrStringToPath(m_instance, "/interaction_profiles/microsoft/motion_controller",
-                                       &microsoftMixedRealityInteractionProfilePath));
+            HXR_CHECK_XRCMD(xrStringToPath(m_instance, "/interaction_profiles/microsoft/motion_controller",
+                                           &microsoftMixedRealityInteractionProfilePath));
             std::vector<XrActionSuggestedBinding> bindings{{{m_input.grabAction, squeezeClickPath[Side::LEFT]},
                                                             {m_input.grabAction, squeezeClickPath[Side::RIGHT]},
                                                             {m_input.poseAction, posePath[Side::LEFT]},
@@ -536,24 +564,24 @@ struct OpenXrProgram : IOpenXrProgram {
             suggestedBindings.interactionProfile = microsoftMixedRealityInteractionProfilePath;
             suggestedBindings.suggestedBindings = bindings.data();
             suggestedBindings.countSuggestedBindings = (uint32_t)bindings.size();
-            CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
+            HXR_CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
         }
         XrActionSpaceCreateInfo actionSpaceInfo{XR_TYPE_ACTION_SPACE_CREATE_INFO};
         actionSpaceInfo.action = m_input.poseAction;
         actionSpaceInfo.poseInActionSpace.orientation.w = 1.f;
         actionSpaceInfo.subactionPath = m_input.handSubactionPath[Side::LEFT];
-        CHECK_XRCMD(xrCreateActionSpace(m_session, &actionSpaceInfo, &m_input.handSpace[Side::LEFT]));
+        HXR_CHECK_XRCMD(xrCreateActionSpace(m_session, &actionSpaceInfo, &m_input.handSpace[Side::LEFT]));
         actionSpaceInfo.subactionPath = m_input.handSubactionPath[Side::RIGHT];
-        CHECK_XRCMD(xrCreateActionSpace(m_session, &actionSpaceInfo, &m_input.handSpace[Side::RIGHT]));
+        HXR_CHECK_XRCMD(xrCreateActionSpace(m_session, &actionSpaceInfo, &m_input.handSpace[Side::RIGHT]));
 
         XrSessionActionSetsAttachInfo attachInfo{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
         attachInfo.countActionSets = 1;
         attachInfo.actionSets = &m_input.actionSet;
-        CHECK_XRCMD(xrAttachSessionActionSets(m_session, &attachInfo));
+        HXR_CHECK_XRCMD(xrAttachSessionActionSets(m_session, &attachInfo));
     }
 
     void CreateVisualizedSpaces() {
-        CHECK(m_session != XR_NULL_HANDLE);
+        HXR_CHECK(m_session != XR_NULL_HANDLE);
 
         std::string visualizedSpaces[] = {"ViewFront",        "Local", "Stage", "StageLeft", "StageRight", "StageLeftRotated",
                                           "StageRightRotated"};
@@ -572,16 +600,16 @@ struct OpenXrProgram : IOpenXrProgram {
     }
 
     void InitializeSession() override {
-        CHECK(m_instance != XR_NULL_HANDLE);
-        CHECK(m_session == XR_NULL_HANDLE);
+        HXR_CHECK(m_instance != XR_NULL_HANDLE);
+        HXR_CHECK(m_session == XR_NULL_HANDLE);
 
         {
             Log::Write(Log::Level::Verbose, Fmt("Creating session..."));
 
             XrSessionCreateInfo createInfo{XR_TYPE_SESSION_CREATE_INFO};
-            createInfo.next = m_graphicsPlugin->GetGraphicsBinding();
+            createInfo.next = m_graphicsPlugin->GetSessionGraphicsBinding();
             createInfo.systemId = m_systemId;
-            CHECK_XRCMD(xrCreateSession(m_instance, &createInfo, &m_session));
+            HXR_CHECK_XRCMD(xrCreateSession(m_instance, &createInfo, &m_session));
         }
 
         LogReferenceSpaces();
@@ -590,18 +618,18 @@ struct OpenXrProgram : IOpenXrProgram {
 
         {
             XrReferenceSpaceCreateInfo referenceSpaceCreateInfo = GetXrReferenceSpaceCreateInfo(m_options->AppSpace);
-            CHECK_XRCMD(xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &m_appSpace));
+            HXR_CHECK_XRCMD(xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &m_appSpace));
         }
     }
 
     void CreateSwapchains() override {
-        CHECK(m_session != XR_NULL_HANDLE);
-        CHECK(m_swapchains.empty());
-        CHECK(m_configViews.empty());
+        HXR_CHECK(m_session != XR_NULL_HANDLE);
+        HXR_CHECK(m_swapchains.empty());
+        HXR_CHECK(m_configViews.empty());
 
         // Read graphics properties for preferred swapchain length and logging.
         XrSystemProperties systemProperties{XR_TYPE_SYSTEM_PROPERTIES};
-        CHECK_XRCMD(xrGetSystemProperties(m_instance, m_systemId, &systemProperties));
+        HXR_CHECK_XRCMD(xrGetSystemProperties(m_instance, m_systemId, &systemProperties));
 
         // Log system properties.
         Log::Write(Log::Level::Info,
@@ -617,14 +645,14 @@ struct OpenXrProgram : IOpenXrProgram {
         // Note: No other view configurations exist at the time this code was written. If this
         // condition is not met, the project will need to be audited to see how support should be
         // added.
-        CHECK_MSG(m_viewConfigType == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, "Unsupported view configuration type");
+        HXR_CHECK_MSG(m_viewConfigType == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, "Unsupported view configuration type");
 
         // Query and cache view configuration views.
         uint32_t viewCount;
-        CHECK_XRCMD(xrEnumerateViewConfigurationViews(m_instance, m_systemId, m_viewConfigType, 0, &viewCount, nullptr));
+        HXR_CHECK_XRCMD(xrEnumerateViewConfigurationViews(m_instance, m_systemId, m_viewConfigType, 0, &viewCount, nullptr));
         m_configViews.resize(viewCount, {XR_TYPE_VIEW_CONFIGURATION_VIEW});
-        CHECK_XRCMD(xrEnumerateViewConfigurationViews(m_instance, m_systemId, m_viewConfigType, viewCount, &viewCount,
-                                                      m_configViews.data()));
+        HXR_CHECK_XRCMD(xrEnumerateViewConfigurationViews(m_instance, m_systemId, m_viewConfigType, viewCount, &viewCount,
+                                                          m_configViews.data()));
 
         // Create and cache view buffer for xrLocateViews later.
         m_views.resize(viewCount, {XR_TYPE_VIEW});
@@ -633,17 +661,24 @@ struct OpenXrProgram : IOpenXrProgram {
         if (viewCount > 0) {
             // Select a swapchain format.
             uint32_t swapchainFormatCount;
-            CHECK_XRCMD(xrEnumerateSwapchainFormats(m_session, 0, &swapchainFormatCount, nullptr));
-            std::vector<int64_t> swapchainFormats(swapchainFormatCount);
-            CHECK_XRCMD(xrEnumerateSwapchainFormats(m_session, (uint32_t)swapchainFormats.size(), &swapchainFormatCount,
-                                                    swapchainFormats.data()));
-            CHECK(swapchainFormatCount == swapchainFormats.size());
-            m_colorSwapchainFormat = m_graphicsPlugin->SelectColorSwapchainFormat(swapchainFormats);
+            HXR_CHECK_XRCMD(xrEnumerateSwapchainFormats(m_session, 0, &swapchainFormatCount, nullptr));
+            std::vector<int64_t> runtimeFormats(swapchainFormatCount);
+            HXR_CHECK_XRCMD(xrEnumerateSwapchainFormats(m_session, (uint32_t)runtimeFormats.size(), &swapchainFormatCount,
+                                                        runtimeFormats.data()));
+
+            auto appSupportedColorFormats = m_graphicsPlugin->SupportedColorFormats();
+            auto swapchainFormatIt = std::find_first_of(runtimeFormats.begin(), runtimeFormats.end(),
+                                                        std::begin(appSupportedColorFormats), std::end(appSupportedColorFormats));
+            if (swapchainFormatIt == runtimeFormats.end()) {
+                THROW("No runtime swapchain format supported for color swapchain");
+            }
+
+            m_colorSwapchainFormat = *swapchainFormatIt;
 
             // Print swapchain formats and the selected one.
             {
                 std::string swapchainFormatsString;
-                for (int64_t format : swapchainFormats) {
+                for (int64_t format : runtimeFormats) {
                     const bool selected = format == m_colorSwapchainFormat;
                     swapchainFormatsString += " ";
                     if (selected) {
@@ -664,33 +699,38 @@ struct OpenXrProgram : IOpenXrProgram {
                            Fmt("Creating swapchain for view %d with dimensions Width=%d Height=%d SampleCount=%d", i,
                                vp.recommendedImageRectWidth, vp.recommendedImageRectHeight, vp.recommendedSwapchainSampleCount));
 
+                Swapchain swapchain;
+                swapchain.width = vp.recommendedImageRectWidth;
+                swapchain.height = vp.recommendedImageRectHeight;
+
                 // Create the swapchain.
                 XrSwapchainCreateInfo swapchainCreateInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
                 swapchainCreateInfo.arraySize = 1;
                 swapchainCreateInfo.format = m_colorSwapchainFormat;
-                swapchainCreateInfo.width = vp.recommendedImageRectWidth;
-                swapchainCreateInfo.height = vp.recommendedImageRectHeight;
+                swapchainCreateInfo.width = swapchain.width;
+                swapchainCreateInfo.height = swapchain.height;
                 swapchainCreateInfo.mipCount = 1;
                 swapchainCreateInfo.faceCount = 1;
-                swapchainCreateInfo.sampleCount = m_graphicsPlugin->GetSupportedSwapchainSampleCount(vp);
+                swapchainCreateInfo.sampleCount = 1;
                 swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
-                Swapchain swapchain;
-                swapchain.width = swapchainCreateInfo.width;
-                swapchain.height = swapchainCreateInfo.height;
-                CHECK_XRCMD(xrCreateSwapchain(m_session, &swapchainCreateInfo, &swapchain.handle));
+                HXR_CHECK_XRCMD(xrCreateSwapchain(m_session, &swapchainCreateInfo, &swapchain.handle));
+
+                swapchain.textures = m_graphicsPlugin->GetSwapchainTextures(swapchain.handle, swapchainCreateInfo);
+
+                for (auto& texture : swapchain.textures) {
+                    RefCntAutoPtr<ITextureView> textureView;
+                    TextureViewDesc viewDesc;
+                    viewDesc.ViewType = TEXTURE_VIEW_RENDER_TARGET;
+                    viewDesc.Format = m_graphicsPlugin->GetTextureFormat(m_colorSwapchainFormat);
+                    texture->CreateView(viewDesc, &textureView);
+                    swapchain.textureRtvs.push_back(textureView);
+                }
 
                 m_swapchains.push_back(swapchain);
-
-                uint32_t imageCount;
-                CHECK_XRCMD(xrEnumerateSwapchainImages(swapchain.handle, 0, &imageCount, nullptr));
-                // XXX This should really just return XrSwapchainImageBaseHeader*
-                std::vector<XrSwapchainImageBaseHeader*> swapchainImages =
-                    m_graphicsPlugin->AllocateSwapchainImageStructs(imageCount, swapchainCreateInfo);
-                CHECK_XRCMD(xrEnumerateSwapchainImages(swapchain.handle, imageCount, &imageCount, swapchainImages[0]));
-
-                m_swapchainImages.insert(std::make_pair(swapchain.handle, std::move(swapchainImages)));
             }
         }
+
+        CreateRenderResources();
     }
 
     // Return event if one is available, otherwise return null.
@@ -711,7 +751,7 @@ struct OpenXrProgram : IOpenXrProgram {
         if (xr == XR_EVENT_UNAVAILABLE) {
             return nullptr;
         }
-        THROW_XR(xr, "xrPollEvent");
+        HXR_THROW_XR(xr, "xrPollEvent");
     }
 
     void PollEvents(bool* exitRenderLoop, bool* requestRestart) override {
@@ -762,17 +802,17 @@ struct OpenXrProgram : IOpenXrProgram {
 
         switch (m_sessionState) {
             case XR_SESSION_STATE_READY: {
-                CHECK(m_session != XR_NULL_HANDLE);
+                HXR_CHECK(m_session != XR_NULL_HANDLE);
                 XrSessionBeginInfo sessionBeginInfo{XR_TYPE_SESSION_BEGIN_INFO};
                 sessionBeginInfo.primaryViewConfigurationType = m_viewConfigType;
-                CHECK_XRCMD(xrBeginSession(m_session, &sessionBeginInfo));
+                HXR_CHECK_XRCMD(xrBeginSession(m_session, &sessionBeginInfo));
                 m_sessionRunning = true;
                 break;
             }
             case XR_SESSION_STATE_STOPPING: {
-                CHECK(m_session != XR_NULL_HANDLE);
+                HXR_CHECK(m_session != XR_NULL_HANDLE);
                 m_sessionRunning = false;
-                CHECK_XRCMD(xrEndSession(m_session))
+                HXR_CHECK_XRCMD(xrEndSession(m_session))
                 break;
             }
             case XR_SESSION_STATE_EXITING: {
@@ -796,9 +836,9 @@ struct OpenXrProgram : IOpenXrProgram {
         XrBoundSourcesForActionEnumerateInfo getInfo = {XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO};
         getInfo.action = action;
         uint32_t pathCount = 0;
-        CHECK_XRCMD(xrEnumerateBoundSourcesForAction(m_session, &getInfo, 0, &pathCount, nullptr));
+        HXR_CHECK_XRCMD(xrEnumerateBoundSourcesForAction(m_session, &getInfo, 0, &pathCount, nullptr));
         std::vector<XrPath> paths(pathCount);
-        CHECK_XRCMD(xrEnumerateBoundSourcesForAction(m_session, &getInfo, uint32_t(paths.size()), &pathCount, paths.data()));
+        HXR_CHECK_XRCMD(xrEnumerateBoundSourcesForAction(m_session, &getInfo, uint32_t(paths.size()), &pathCount, paths.data()));
 
         std::string sourceName;
         for (uint32_t i = 0; i < pathCount; ++i) {
@@ -811,12 +851,13 @@ struct OpenXrProgram : IOpenXrProgram {
             nameInfo.whichComponents = all;
 
             uint32_t size = 0;
-            CHECK_XRCMD(xrGetInputSourceLocalizedName(m_session, &nameInfo, 0, &size, nullptr));
+            HXR_CHECK_XRCMD(xrGetInputSourceLocalizedName(m_session, &nameInfo, 0, &size, nullptr));
             if (size < 1) {
                 continue;
             }
             std::vector<char> grabSource(size);
-            CHECK_XRCMD(xrGetInputSourceLocalizedName(m_session, &nameInfo, uint32_t(grabSource.size()), &size, grabSource.data()));
+            HXR_CHECK_XRCMD(
+                xrGetInputSourceLocalizedName(m_session, &nameInfo, uint32_t(grabSource.size()), &size, grabSource.data()));
             if (!sourceName.empty()) {
                 sourceName += " and ";
             }
@@ -841,7 +882,7 @@ struct OpenXrProgram : IOpenXrProgram {
         XrActionsSyncInfo syncInfo{XR_TYPE_ACTIONS_SYNC_INFO};
         syncInfo.countActiveActionSets = 1;
         syncInfo.activeActionSets = &activeActionSet;
-        CHECK_XRCMD(xrSyncActions(m_session, &syncInfo));
+        HXR_CHECK_XRCMD(xrSyncActions(m_session, &syncInfo));
 
         // Get pose and grab action state and start haptic vibrate when hand is 90% squeezed.
         for (auto hand : {Side::LEFT, Side::RIGHT}) {
@@ -850,7 +891,7 @@ struct OpenXrProgram : IOpenXrProgram {
             getInfo.subactionPath = m_input.handSubactionPath[hand];
 
             XrActionStateFloat grabValue{XR_TYPE_ACTION_STATE_FLOAT};
-            CHECK_XRCMD(xrGetActionStateFloat(m_session, &getInfo, &grabValue));
+            HXR_CHECK_XRCMD(xrGetActionStateFloat(m_session, &getInfo, &grabValue));
             if (grabValue.isActive == XR_TRUE) {
                 // Scale the rendered hand by 1.0f (open) to 0.5f (fully squeezed).
                 m_input.handScale[hand] = 1.0f - 0.5f * grabValue.currentState;
@@ -863,34 +904,155 @@ struct OpenXrProgram : IOpenXrProgram {
                     XrHapticActionInfo hapticActionInfo{XR_TYPE_HAPTIC_ACTION_INFO};
                     hapticActionInfo.action = m_input.vibrateAction;
                     hapticActionInfo.subactionPath = m_input.handSubactionPath[hand];
-                    CHECK_XRCMD(xrApplyHapticFeedback(m_session, &hapticActionInfo, (XrHapticBaseHeader*)&vibration));
+                    HXR_CHECK_XRCMD(xrApplyHapticFeedback(m_session, &hapticActionInfo, (XrHapticBaseHeader*)&vibration));
                 }
             }
 
             getInfo.action = m_input.poseAction;
             XrActionStatePose poseState{XR_TYPE_ACTION_STATE_POSE};
-            CHECK_XRCMD(xrGetActionStatePose(m_session, &getInfo, &poseState));
+            HXR_CHECK_XRCMD(xrGetActionStatePose(m_session, &getInfo, &poseState));
             m_input.handActive[hand] = poseState.isActive;
         }
 
         // There were no subaction paths specified for the quit action, because we don't care which hand did it.
         XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, m_input.quitAction, XR_NULL_PATH};
         XrActionStateBoolean quitValue{XR_TYPE_ACTION_STATE_BOOLEAN};
-        CHECK_XRCMD(xrGetActionStateBoolean(m_session, &getInfo, &quitValue));
+        HXR_CHECK_XRCMD(xrGetActionStateBoolean(m_session, &getInfo, &quitValue));
         if ((quitValue.isActive == XR_TRUE) && (quitValue.changedSinceLastSync == XR_TRUE) && (quitValue.currentState == XR_TRUE)) {
-            CHECK_XRCMD(xrRequestExitSession(m_session));
+            HXR_CHECK_XRCMD(xrRequestExitSession(m_session));
         }
     }
 
+    RefCntAutoPtr<IPipelineState> m_pPSO;
+    RefCntAutoPtr<IBuffer> m_VSConstants;
+    RefCntAutoPtr<IBuffer> m_CubeVertexBuffer;
+    RefCntAutoPtr<IBuffer> m_CubeIndexBuffer;
+    float4x4 m_WorldViewProjMatrix;
+
+    void CreateRenderResources() {
+        static const char* VSSource = R"(
+cbuffer Constants {
+    float4x4 g_WorldViewProj;
+};
+struct VSInput {
+    float3 Pos   : ATTRIB0;
+    float3 Color : ATTRIB1;
+};
+struct PSInput {
+    float4 Pos   : SV_POSITION; 
+    float4 Color : COLOR0; 
+};
+void main(in VSInput VSIn, out PSInput PSIn) {
+    PSIn.Pos   = mul(float4(VSIn.Pos,1.0), g_WorldViewProj);
+    PSIn.Color = float4(VSIn.Color, 1);
+}
+)";
+
+        // Pixel shader simply outputs interpolated vertex color
+        static const char* PSSource = R"(
+struct PSInput  { 
+    float4 Pos   : SV_POSITION; 
+    float4 Color : COLOR0; 
+};
+struct PSOutput { 
+    float4 Color : SV_TARGET; 
+};
+void main(in PSInput PSIn, out PSOutput PSOut) {
+    PSOut.Color = PSIn.Color; 
+}
+)";
+
+        auto m_pDevice = m_graphicsPlugin->RenderDevice();
+
+        GraphicsPipelineStateCreateInfo PSOCreateInfo;
+        PSOCreateInfo.PSODesc.Name = "Simple triangle PSO";
+        PSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+        PSOCreateInfo.GraphicsPipeline.NumRenderTargets = 1;
+        PSOCreateInfo.GraphicsPipeline.RTVFormats[0] = m_swapchains.front().textureRtvs.front()->GetDesc().Format;
+        // PSOCreateInfo.GraphicsPipeline.DSVFormat = m_pSwapChain->GetDesc().DepthBufferFormat;
+        PSOCreateInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        PSOCreateInfo.GraphicsPipeline.RasterizerDesc.CullMode = CULL_MODE_NONE;
+        PSOCreateInfo.GraphicsPipeline.DepthStencilDesc.DepthEnable = False;
+
+        ShaderCreateInfo ShaderCI;
+        ShaderCI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+        ShaderCI.UseCombinedTextureSamplers = true;
+
+        RefCntAutoPtr<IShader> pVS;
+        {
+            ShaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
+            ShaderCI.EntryPoint = "main";
+            ShaderCI.Desc.Name = "Cube vertex shader";
+            ShaderCI.Source = VSSource;
+            m_pDevice->CreateShader(ShaderCI, &pVS);
+
+            BufferDesc CBDesc;
+            CBDesc.Name = "VS constants CB";
+            CBDesc.uiSizeInBytes = sizeof(float4x4);
+            CBDesc.Usage = USAGE_DYNAMIC;
+            CBDesc.BindFlags = BIND_UNIFORM_BUFFER;
+            CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+            m_pDevice->CreateBuffer(CBDesc, nullptr, &m_VSConstants);
+        }
+
+        // Create a pixel shader
+        RefCntAutoPtr<IShader> pPS;
+        {
+            ShaderCI.Desc.ShaderType = SHADER_TYPE_PIXEL;
+            ShaderCI.EntryPoint = "main";
+            ShaderCI.Desc.Name = "Cube pixel shader";
+            ShaderCI.Source = PSSource;
+            m_pDevice->CreateShader(ShaderCI, &pPS);
+        }
+
+        LayoutElement LayoutElems[] = {
+            LayoutElement{0, 0, 3, VT_FLOAT32, False},  // Pos
+            LayoutElement{1, 0, 3, VT_FLOAT32, False}   // Color
+        };
+        PSOCreateInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
+        PSOCreateInfo.GraphicsPipeline.InputLayout.NumElements = _countof(LayoutElems);
+
+        PSOCreateInfo.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+
+        // Finally, create the pipeline state
+        PSOCreateInfo.pVS = pVS;
+        PSOCreateInfo.pPS = pPS;
+        m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &m_pPSO);
+
+        m_pPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "Constants")->Set(m_VSConstants);
+        //m_pPSO->CreateShaderResourceBinding(&m_pSRB, true);
+
+        // Create a vertex buffer that stores cube vertices
+        BufferDesc VertBuffDesc;
+        VertBuffDesc.Name = "Cube vertex buffer";
+        VertBuffDesc.Usage = USAGE_IMMUTABLE;
+        VertBuffDesc.BindFlags = BIND_VERTEX_BUFFER;
+        VertBuffDesc.uiSizeInBytes = sizeof(Geometry::c_cubeVertices);
+        BufferData VBData;
+        VBData.pData = Geometry::c_cubeVertices;
+        VBData.DataSize = sizeof(Geometry::c_cubeVertices);
+        m_pDevice->CreateBuffer(VertBuffDesc, &VBData, &m_CubeVertexBuffer);
+
+        BufferDesc IndBuffDesc;
+        IndBuffDesc.Name = "Cube index buffer";
+        IndBuffDesc.Usage = USAGE_IMMUTABLE;
+        IndBuffDesc.BindFlags = BIND_INDEX_BUFFER;
+        IndBuffDesc.uiSizeInBytes = sizeof(Geometry::c_cubeIndices);
+        BufferData IBData;
+        IBData.pData = Geometry::c_cubeIndices;
+        IBData.DataSize = sizeof(Geometry::c_cubeIndices);
+        m_pDevice->CreateBuffer(IndBuffDesc, &IBData, &m_CubeIndexBuffer);
+    }
+
     void RenderFrame() override {
-        CHECK(m_session != XR_NULL_HANDLE);
+        HXR_CHECK(m_session != XR_NULL_HANDLE);
 
         XrFrameWaitInfo frameWaitInfo{XR_TYPE_FRAME_WAIT_INFO};
         XrFrameState frameState{XR_TYPE_FRAME_STATE};
-        CHECK_XRCMD(xrWaitFrame(m_session, &frameWaitInfo, &frameState));
+        HXR_CHECK_XRCMD(xrWaitFrame(m_session, &frameWaitInfo, &frameState));
 
         XrFrameBeginInfo frameBeginInfo{XR_TYPE_FRAME_BEGIN_INFO};
-        CHECK_XRCMD(xrBeginFrame(m_session, &frameBeginInfo));
+        HXR_CHECK_XRCMD(xrBeginFrame(m_session, &frameBeginInfo));
 
         std::vector<XrCompositionLayerBaseHeader*> layers;
         XrCompositionLayerProjection layer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
@@ -906,7 +1068,7 @@ struct OpenXrProgram : IOpenXrProgram {
         frameEndInfo.environmentBlendMode = m_environmentBlendMode;
         frameEndInfo.layerCount = (uint32_t)layers.size();
         frameEndInfo.layers = layers.data();
-        CHECK_XRCMD(xrEndFrame(m_session, &frameEndInfo));
+        HXR_CHECK_XRCMD(xrEndFrame(m_session, &frameEndInfo));
     }
 
     bool RenderLayer(XrTime predictedDisplayTime, std::vector<XrCompositionLayerProjectionView>& projectionLayerViews,
@@ -923,15 +1085,15 @@ struct OpenXrProgram : IOpenXrProgram {
         viewLocateInfo.space = m_appSpace;
 
         res = xrLocateViews(m_session, &viewLocateInfo, &viewState, viewCapacityInput, &viewCountOutput, m_views.data());
-        CHECK_XRRESULT(res, "xrLocateViews");
+        HXR_CHECK_XRRESULT(res, "xrLocateViews");
         if ((viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) == 0 ||
             (viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) == 0) {
             return false;  // There is no valid tracking poses for the views.
         }
 
-        CHECK(viewCountOutput == viewCapacityInput);
-        CHECK(viewCountOutput == m_configViews.size());
-        CHECK(viewCountOutput == m_swapchains.size());
+        HXR_CHECK(viewCountOutput == viewCapacityInput);
+        HXR_CHECK(viewCountOutput == m_configViews.size());
+        HXR_CHECK(viewCountOutput == m_swapchains.size());
 
         projectionLayerViews.resize(viewCountOutput);
 
@@ -940,8 +1102,9 @@ struct OpenXrProgram : IOpenXrProgram {
 
         for (XrSpace visualizedSpace : m_visualizedSpaces) {
             XrSpaceLocation spaceLocation{XR_TYPE_SPACE_LOCATION};
+            printf("Locate ref space: %lld\n", predictedDisplayTime);
             res = xrLocateSpace(visualizedSpace, m_appSpace, predictedDisplayTime, &spaceLocation);
-            CHECK_XRRESULT(res, "xrLocateSpace");
+            HXR_CHECK_XRRESULT(res, "xrLocateSpace");
             if (XR_UNQUALIFIED_SUCCESS(res)) {
                 if ((spaceLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 &&
                     (spaceLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0) {
@@ -956,8 +1119,9 @@ struct OpenXrProgram : IOpenXrProgram {
         // true when the application has focus.
         for (auto hand : {Side::LEFT, Side::RIGHT}) {
             XrSpaceLocation spaceLocation{XR_TYPE_SPACE_LOCATION};
+            printf("Locate space hand: %lld\n", predictedDisplayTime);
             res = xrLocateSpace(m_input.handSpace[hand], m_appSpace, predictedDisplayTime, &spaceLocation);
-            CHECK_XRRESULT(res, "xrLocateSpace");
+            HXR_CHECK_XRRESULT(res, "xrLocateSpace");
             if (XR_UNQUALIFIED_SUCCESS(res)) {
                 if ((spaceLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 &&
                     (spaceLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0) {
@@ -978,16 +1142,16 @@ struct OpenXrProgram : IOpenXrProgram {
         // Render view to the appropriate part of the swapchain image.
         for (uint32_t i = 0; i < viewCountOutput; i++) {
             // Each view has a separate swapchain which is acquired, rendered to, and released.
-            const Swapchain viewSwapchain = m_swapchains[i];
+            Swapchain& viewSwapchain = m_swapchains[i];
 
             XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
 
             uint32_t swapchainImageIndex;
-            CHECK_XRCMD(xrAcquireSwapchainImage(viewSwapchain.handle, &acquireInfo, &swapchainImageIndex));
+            HXR_CHECK_XRCMD(xrAcquireSwapchainImage(viewSwapchain.handle, &acquireInfo, &swapchainImageIndex));
 
             XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
             waitInfo.timeout = XR_INFINITE_DURATION;
-            CHECK_XRCMD(xrWaitSwapchainImage(viewSwapchain.handle, &waitInfo));
+            HXR_CHECK_XRCMD(xrWaitSwapchainImage(viewSwapchain.handle, &waitInfo));
 
             projectionLayerViews[i] = {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW};
             projectionLayerViews[i].pose = m_views[i].pose;
@@ -996,11 +1160,65 @@ struct OpenXrProgram : IOpenXrProgram {
             projectionLayerViews[i].subImage.imageRect.offset = {0, 0};
             projectionLayerViews[i].subImage.imageRect.extent = {viewSwapchain.width, viewSwapchain.height};
 
-            const XrSwapchainImageBaseHeader* const swapchainImage = m_swapchainImages[viewSwapchain.handle][swapchainImageIndex];
-            m_graphicsPlugin->RenderView(projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, cubes);
+            auto deviceContext = m_graphicsPlugin->ImmediateContext();
+
+            auto colorRtv = viewSwapchain.textureRtvs[swapchainImageIndex];
+            deviceContext->SetRenderTargets(1, &colorRtv, nullptr /* depth */, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+            const float ClearColor[] = {0.350f, 0.350f, 0.350f, 1.0f};
+            deviceContext->ClearRenderTarget(colorRtv, ClearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+
+            auto loadPose = [](const XrPosef& pose) {
+                float4x4 orientation = Quaternion(*reinterpret_cast<const float4*>(&pose.orientation)).ToMatrix();
+                float4x4 position = float4x4::Translation(*reinterpret_cast<const float3*>(&pose.position));
+                return float4x4::Mul(orientation, position);
+            };
+
+            // float3 position = *reinterpret_cast<const float3*>(&m_views[i].pose.position);
+            float4x4 viewTransform = loadPose(m_views[i].pose);
+
+            float aspectRatio = 1;  // todo
+            float4x4 projection = float4x4::Projection(m_views[i].fov.angleRight, aspectRatio, 0.05f, 20.0f, false /* isGL */);
+
+            for (const auto& cube : cubes) {
+                {
+                    // Map the buffer and write current world-view-projection matrix
+                    MapHelper<float4x4> CBConstants(deviceContext, m_VSConstants, MAP_WRITE, MAP_FLAG_DISCARD);
+                    // todo: use cube scale too.
+                    *CBConstants = loadPose(cube.Pose) * viewTransform.Transpose() * projection;
+                }
+            }
+
+            // Bind vertex and index buffers
+            Uint32 offset = 0;
+            IBuffer* pBuffs[] = {m_CubeVertexBuffer};
+            deviceContext->SetVertexBuffers(0, 1, pBuffs, &offset, RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                                            SET_VERTEX_BUFFERS_FLAG_RESET);
+            deviceContext->SetIndexBuffer(m_CubeIndexBuffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+            deviceContext->SetPipelineState(m_pPSO);
+
+            /*DrawAttribs drawAttrs;
+            drawAttrs.NumVertices = 3;  // Render 3 vertices
+            deviceContext->Draw(drawAttrs);
+
+            deviceContext->Flush();
+            deviceContext->FinishFrame();*/
+
+            // deviceContext->CommitShaderResources(m_pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+            DrawIndexedAttribs DrawAttrs;     // This is an indexed draw call
+            DrawAttrs.IndexType = VT_UINT32;  // Index type
+            DrawAttrs.NumIndices = 36;
+            // Verify the state of vertex and index buffers
+            DrawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+            deviceContext->DrawIndexed(DrawAttrs);
+
+            // m_graphicsPlugin->RenderView(projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, cubes);
 
             XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-            CHECK_XRCMD(xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
+            HXR_CHECK_XRCMD(xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
         }
 
         layer.space = m_appSpace;
@@ -1012,7 +1230,7 @@ struct OpenXrProgram : IOpenXrProgram {
    private:
     const std::shared_ptr<Options> m_options;
     std::shared_ptr<IPlatformPlugin> m_platformPlugin;
-    std::shared_ptr<IGraphicsPlugin> m_graphicsPlugin;
+    std::shared_ptr<IGraphicsInterop> m_graphicsPlugin;
     XrInstance m_instance{XR_NULL_HANDLE};
     XrSession m_session{XR_NULL_HANDLE};
     XrSpace m_appSpace{XR_NULL_HANDLE};
@@ -1023,7 +1241,6 @@ struct OpenXrProgram : IOpenXrProgram {
 
     std::vector<XrViewConfigurationView> m_configViews;
     std::vector<Swapchain> m_swapchains;
-    std::map<XrSwapchain, std::vector<XrSwapchainImageBaseHeader*>> m_swapchainImages;
     std::vector<XrView> m_views;
     int64_t m_colorSwapchainFormat{-1};
 
@@ -1039,7 +1256,6 @@ struct OpenXrProgram : IOpenXrProgram {
 }  // namespace
 
 std::shared_ptr<IOpenXrProgram> CreateOpenXrProgram(const std::shared_ptr<Options>& options,
-                                                    const std::shared_ptr<IPlatformPlugin>& platformPlugin,
-                                                    const std::shared_ptr<IGraphicsPlugin>& graphicsPlugin) {
-    return std::make_shared<OpenXrProgram>(options, platformPlugin, graphicsPlugin);
+                                                    const std::shared_ptr<IPlatformPlugin>& platformPlugin) {
+    return std::make_shared<OpenXrProgram>(options, platformPlugin);
 }

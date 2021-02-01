@@ -7,267 +7,336 @@
 #include "geometry.h"
 #include "graphicsplugin.h"
 
-#if defined(XR_USE_GRAPHICS_API_D3D11) && !defined(MISSING_DIRECTX_COLORS)
-
-#include <common/xr_linear.h>
-#include <DirectXColors.h>
-#include <D3Dcompiler.h>
-
-#include "d3d_common.h"
-
-using namespace Microsoft::WRL;
-using namespace DirectX;
-
-namespace {
-void InitializeD3D11DeviceForAdapter(IDXGIAdapter1* adapter, const std::vector<D3D_FEATURE_LEVEL>& featureLevels,
-                                     ID3D11Device** device, ID3D11DeviceContext** deviceContext) {
-    UINT creationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
-
-#if !defined(NDEBUG)
-    creationFlags |= D3D11_CREATE_DEVICE_DEBUG;
+#if defined(XR_USE_GRAPHICS_API_D3D11)
+#include "Graphics/GraphicsEngineD3D11/interface/EngineFactoryD3D11.h"
+#include "Graphics/GraphicsEngineD3D11/interface/RenderDeviceD3D11.h"
+#include "Graphics/GraphicsEngineD3DBase/include/DXGITypeConversions.hpp"
 #endif
 
-    // Create the Direct3D 11 API device object and a corresponding context.
-    D3D_DRIVER_TYPE driverType = ((adapter == nullptr) ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_UNKNOWN);
+#if defined(XR_USE_GRAPHICS_API_D3D12)
+#include "Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h"
+#include "Graphics/GraphicsEngineD3D12/interface/RenderDeviceD3D12.h"
+#include "Graphics/GraphicsEngineD3D12/interface/DeviceContextD3D12.h"
+#include "Graphics/GraphicsEngineD3DBase/include/DXGITypeConversions.hpp"
+#endif
 
-TryAgain:
-    HRESULT hr = D3D11CreateDevice(adapter, driverType, 0, creationFlags, featureLevels.data(), (UINT)featureLevels.size(),
-                                   D3D11_SDK_VERSION, device, nullptr, deviceContext);
-    if (FAILED(hr)) {
-        // If initialization failed, it may be because device debugging isn't supported, so retry without that.
-        if ((creationFlags & D3D11_CREATE_DEVICE_DEBUG) && (hr == DXGI_ERROR_SDK_COMPONENT_MISSING)) {
-            creationFlags &= ~D3D11_CREATE_DEVICE_DEBUG;
-            goto TryAgain;
-        }
+#if defined(XR_USE_GRAPHICS_API_VULKAN)
+#include "Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h"
+#include "Graphics/GraphicsEngineVulkan/interface/RenderDeviceVk.h"
+#include "Graphics/GraphicsEngineVulkan/interface/DeviceContextVk.h"
+#include "Graphics/GraphicsEngineVulkan/include/VulkanTypeConversions.hpp"
+#endif
 
-        // If the initialization still fails, fall back to the WARP device.
-        // For more information on WARP, see: http://go.microsoft.com/fwlink/?LinkId=286690
-        if (driverType != D3D_DRIVER_TYPE_WARP) {
-            driverType = D3D_DRIVER_TYPE_WARP;
-            goto TryAgain;
-        }
-    }
-}
+#include "Graphics/GraphicsEngine/interface/GraphicsTypes.h"
 
-struct D3D11GraphicsPlugin : public IGraphicsPlugin {
-    D3D11GraphicsPlugin(const std::shared_ptr<Options>&, std::shared_ptr<IPlatformPlugin>){};
+#include "options.h"
+#include "graphicsplugin.h"
 
-    std::vector<std::string> GetInstanceExtensions() const override { return {XR_KHR_D3D11_ENABLE_EXTENSION_NAME}; }
+using namespace Diligent;
 
-    void InitializeDevice(XrInstance instance, XrSystemId systemId) override {
-        PFN_xrGetD3D11GraphicsRequirementsKHR pfnGetD3D11GraphicsRequirementsKHR = nullptr;
-        CHECK_XRCMD(xrGetInstanceProcAddr(instance, "xrGetD3D11GraphicsRequirementsKHR",
-                                          reinterpret_cast<PFN_xrVoidFunction*>(&pfnGetD3D11GraphicsRequirementsKHR)));
-
-        // Create the D3D11 device for the adapter associated with the system.
-        XrGraphicsRequirementsD3D11KHR graphicsRequirements{XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR};
-        CHECK_XRCMD(pfnGetD3D11GraphicsRequirementsKHR(instance, systemId, &graphicsRequirements));
-        const ComPtr<IDXGIAdapter1> adapter = GetAdapter(graphicsRequirements.adapterLuid);
-
-        // Create a list of feature levels which are both supported by the OpenXR runtime and this application.
-        std::vector<D3D_FEATURE_LEVEL> featureLevels = {D3D_FEATURE_LEVEL_12_1, D3D_FEATURE_LEVEL_12_0, D3D_FEATURE_LEVEL_11_1,
-                                                        D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0};
-        featureLevels.erase(std::remove_if(featureLevels.begin(), featureLevels.end(),
-                                           [&](D3D_FEATURE_LEVEL fl) { return fl < graphicsRequirements.minFeatureLevel; }),
-                            featureLevels.end());
-        CHECK_MSG(featureLevels.size() != 0, "Unsupported minimum feature level!");
-
-        InitializeD3D11DeviceForAdapter(adapter.Get(), featureLevels, m_device.ReleaseAndGetAddressOf(),
-                                        m_deviceContext.ReleaseAndGetAddressOf());
-
-        InitializeResources();
-
-        m_graphicsBinding.device = m_device.Get();
-    }
-
-    void InitializeResources() {
-        const ComPtr<ID3DBlob> vertexShaderBytes = CompileShader(ShaderHlsl, "MainVS", "vs_5_0");
-        CHECK_HRCMD(m_device->CreateVertexShader(vertexShaderBytes->GetBufferPointer(), vertexShaderBytes->GetBufferSize(), nullptr,
-                                                 m_vertexShader.ReleaseAndGetAddressOf()));
-
-        const ComPtr<ID3DBlob> pixelShaderBytes = CompileShader(ShaderHlsl, "MainPS", "ps_5_0");
-        CHECK_HRCMD(m_device->CreatePixelShader(pixelShaderBytes->GetBufferPointer(), pixelShaderBytes->GetBufferSize(), nullptr,
-                                                m_pixelShader.ReleaseAndGetAddressOf()));
-
-        const D3D11_INPUT_ELEMENT_DESC vertexDesc[] = {
-            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0},
-            {"COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0},
-        };
-
-        CHECK_HRCMD(m_device->CreateInputLayout(vertexDesc, (UINT)ArraySize(vertexDesc), vertexShaderBytes->GetBufferPointer(),
-                                                vertexShaderBytes->GetBufferSize(), &m_inputLayout));
-
-        const CD3D11_BUFFER_DESC modelConstantBufferDesc(sizeof(ModelConstantBuffer), D3D11_BIND_CONSTANT_BUFFER);
-        CHECK_HRCMD(m_device->CreateBuffer(&modelConstantBufferDesc, nullptr, m_modelCBuffer.ReleaseAndGetAddressOf()));
-
-        const CD3D11_BUFFER_DESC viewProjectionConstantBufferDesc(sizeof(ViewProjectionConstantBuffer), D3D11_BIND_CONSTANT_BUFFER);
-        CHECK_HRCMD(
-            m_device->CreateBuffer(&viewProjectionConstantBufferDesc, nullptr, m_viewProjectionCBuffer.ReleaseAndGetAddressOf()));
-
-        const D3D11_SUBRESOURCE_DATA vertexBufferData{Geometry::c_cubeVertices};
-        const CD3D11_BUFFER_DESC vertexBufferDesc(sizeof(Geometry::c_cubeVertices), D3D11_BIND_VERTEX_BUFFER);
-        CHECK_HRCMD(m_device->CreateBuffer(&vertexBufferDesc, &vertexBufferData, m_cubeVertexBuffer.ReleaseAndGetAddressOf()));
-
-        const D3D11_SUBRESOURCE_DATA indexBufferData{Geometry::c_cubeIndices};
-        const CD3D11_BUFFER_DESC indexBufferDesc(sizeof(Geometry::c_cubeIndices), D3D11_BIND_INDEX_BUFFER);
-        CHECK_HRCMD(m_device->CreateBuffer(&indexBufferDesc, &indexBufferData, m_cubeIndexBuffer.ReleaseAndGetAddressOf()));
-    }
-
-    int64_t SelectColorSwapchainFormat(const std::vector<int64_t>& runtimeFormats) const override {
-        // List of supported color swapchain formats.
-        constexpr DXGI_FORMAT SupportedColorSwapchainFormats[] = {
+#if defined(XR_USE_GRAPHICS_API_D3D11)
+namespace {
+struct D3D11GraphicsInterop : IGraphicsInterop {
+    D3D11GraphicsInterop(RefCntAutoPtr<IRenderDeviceD3D11> device, RefCntAutoPtr<IDeviceContext> immediateContext)
+        : m_device(device), m_immediateContext(immediateContext) {
+        m_d3d11GraphicsBinding.device = m_device->GetD3D11Device();
+        m_supportedColorFormats = {
             DXGI_FORMAT_R8G8B8A8_UNORM,
             DXGI_FORMAT_B8G8R8A8_UNORM,
             DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
             DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
         };
-
-        auto swapchainFormatIt =
-            std::find_first_of(runtimeFormats.begin(), runtimeFormats.end(), std::begin(SupportedColorSwapchainFormats),
-                               std::end(SupportedColorSwapchainFormats));
-        if (swapchainFormatIt == runtimeFormats.end()) {
-            THROW("No runtime swapchain format supported for color swapchain");
-        }
-
-        return *swapchainFormatIt;
     }
 
-    const XrBaseInStructure* GetGraphicsBinding() const override {
-        return reinterpret_cast<const XrBaseInStructure*>(&m_graphicsBinding);
+    IRenderDevice* RenderDevice() override { return m_device; }
+    IDeviceContext* ImmediateContext() override { return m_immediateContext; }
+
+    std::vector<int64_t> SupportedColorFormats() const override { return m_supportedColorFormats; }
+
+    const XrBaseInStructure* GetSessionGraphicsBinding() const override {
+        return reinterpret_cast<const XrBaseInStructure*>(&m_d3d11GraphicsBinding);
     }
 
-    std::vector<XrSwapchainImageBaseHeader*> AllocateSwapchainImageStructs(
-        uint32_t capacity, const XrSwapchainCreateInfo& /*swapchainCreateInfo*/) override {
-        // Allocate and initialize the buffer of image structs (must be sequential in memory for xrEnumerateSwapchainImages).
-        // Return back an array of pointers to each swapchain image struct so the consumer doesn't need to know the type/size.
-        std::vector<XrSwapchainImageD3D11KHR> swapchainImageBuffer(capacity);
-        std::vector<XrSwapchainImageBaseHeader*> swapchainImageBase;
-        for (XrSwapchainImageD3D11KHR& image : swapchainImageBuffer) {
-            image.type = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
-            swapchainImageBase.push_back(reinterpret_cast<XrSwapchainImageBaseHeader*>(&image));
-        }
-
-        // Keep the buffer alive by moving it into the list of buffers.
-        m_swapchainImageBuffers.push_back(std::move(swapchainImageBuffer));
-
-        return swapchainImageBase;
+    TEXTURE_FORMAT GetTextureFormat(uint64_t nativeFormat) const override {
+        return DXGI_FormatToTexFormat((DXGI_FORMAT)nativeFormat);
     }
 
-    ComPtr<ID3D11DepthStencilView> GetDepthStencilView(ID3D11Texture2D* colorTexture) {
-        // If a depth-stencil view has already been created for this back-buffer, use it.
-        auto depthBufferIt = m_colorToDepthMap.find(colorTexture);
-        if (depthBufferIt != m_colorToDepthMap.end()) {
-            return depthBufferIt->second;
+    std::vector<RefCntAutoPtr<ITexture>> GetSwapchainTextures(XrSwapchain swapchain, const XrSwapchainCreateInfo&) override {
+        std::vector<XrSwapchainImageD3D11KHR> swapchainImages =
+            GetSwapchainImages<XrSwapchainImageD3D11KHR, XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR>(swapchain);
+
+        std::vector<RefCntAutoPtr<ITexture>> swapchainTextures;
+        for (const XrSwapchainImageD3D11KHR& swapchainImage : swapchainImages) {
+            RefCntAutoPtr<ITexture> swapchainTexture;
+            m_device.RawPtr<IRenderDeviceD3D11>()->CreateTexture2DFromD3DResource(swapchainImage.texture, RESOURCE_STATE_UNDEFINED,
+                                                                                  &swapchainTexture);
+            swapchainTextures.emplace_back(swapchainTexture);
         }
 
-        // This back-buffer has no corresponding depth-stencil texture, so create one with matching dimensions.
-        D3D11_TEXTURE2D_DESC colorDesc;
-        colorTexture->GetDesc(&colorDesc);
-
-        D3D11_TEXTURE2D_DESC depthDesc{};
-        depthDesc.Width = colorDesc.Width;
-        depthDesc.Height = colorDesc.Height;
-        depthDesc.ArraySize = colorDesc.ArraySize;
-        depthDesc.MipLevels = 1;
-        depthDesc.Format = DXGI_FORMAT_R32_TYPELESS;
-        depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_DEPTH_STENCIL;
-        depthDesc.SampleDesc.Count = 1;
-        ComPtr<ID3D11Texture2D> depthTexture;
-        CHECK_HRCMD(m_device->CreateTexture2D(&depthDesc, nullptr, depthTexture.ReleaseAndGetAddressOf()));
-
-        // Create and cache the depth stencil view.
-        ComPtr<ID3D11DepthStencilView> depthStencilView;
-        CD3D11_DEPTH_STENCIL_VIEW_DESC depthStencilViewDesc(D3D11_DSV_DIMENSION_TEXTURE2D, DXGI_FORMAT_D32_FLOAT);
-        CHECK_HRCMD(m_device->CreateDepthStencilView(depthTexture.Get(), &depthStencilViewDesc, depthStencilView.GetAddressOf()));
-        depthBufferIt = m_colorToDepthMap.insert(std::make_pair(colorTexture, depthStencilView)).first;
-
-        return depthStencilView;
-    }
-
-    void RenderView(const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,
-                    int64_t swapchainFormat, const std::vector<Cube>& cubes) override {
-        CHECK(layerView.subImage.imageArrayIndex == 0);  // Texture arrays not supported.
-
-        ID3D11Texture2D* const colorTexture = reinterpret_cast<const XrSwapchainImageD3D11KHR*>(swapchainImage)->texture;
-
-        CD3D11_VIEWPORT viewport((float)layerView.subImage.imageRect.offset.x, (float)layerView.subImage.imageRect.offset.y,
-                                 (float)layerView.subImage.imageRect.extent.width,
-                                 (float)layerView.subImage.imageRect.extent.height);
-        m_deviceContext->RSSetViewports(1, &viewport);
-
-        // Create RenderTargetView with original swapchain format (swapchain is typeless).
-        ComPtr<ID3D11RenderTargetView> renderTargetView;
-        const CD3D11_RENDER_TARGET_VIEW_DESC renderTargetViewDesc(D3D11_RTV_DIMENSION_TEXTURE2D, (DXGI_FORMAT)swapchainFormat);
-        CHECK_HRCMD(
-            m_device->CreateRenderTargetView(colorTexture, &renderTargetViewDesc, renderTargetView.ReleaseAndGetAddressOf()));
-
-        const ComPtr<ID3D11DepthStencilView> depthStencilView = GetDepthStencilView(colorTexture);
-
-        // Clear swapchain and depth buffer. NOTE: This will clear the entire render target view, not just the specified view.
-        // TODO: Do not clear to a color when using a pass-through view configuration.
-        m_deviceContext->ClearRenderTargetView(renderTargetView.Get(), DirectX::Colors::DarkSlateGray);
-        m_deviceContext->ClearDepthStencilView(depthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
-
-        ID3D11RenderTargetView* renderTargets[] = {renderTargetView.Get()};
-        m_deviceContext->OMSetRenderTargets((UINT)ArraySize(renderTargets), renderTargets, depthStencilView.Get());
-
-        const XMMATRIX spaceToView = XMMatrixInverse(nullptr, LoadXrPose(layerView.pose));
-        XrMatrix4x4f projectionMatrix;
-        XrMatrix4x4f_CreateProjectionFov(&projectionMatrix, GRAPHICS_D3D, layerView.fov, 0.05f, 100.0f);
-
-        // Set shaders and constant buffers.
-        ViewProjectionConstantBuffer viewProjection;
-        XMStoreFloat4x4(&viewProjection.ViewProjection, XMMatrixTranspose(spaceToView * LoadXrMatrix(projectionMatrix)));
-        m_deviceContext->UpdateSubresource(m_viewProjectionCBuffer.Get(), 0, nullptr, &viewProjection, 0, 0);
-
-        ID3D11Buffer* const constantBuffers[] = {m_modelCBuffer.Get(), m_viewProjectionCBuffer.Get()};
-        m_deviceContext->VSSetConstantBuffers(0, (UINT)ArraySize(constantBuffers), constantBuffers);
-        m_deviceContext->VSSetShader(m_vertexShader.Get(), nullptr, 0);
-        m_deviceContext->PSSetShader(m_pixelShader.Get(), nullptr, 0);
-
-        // Set cube primitive data.
-        const UINT strides[] = {sizeof(Geometry::Vertex)};
-        const UINT offsets[] = {0};
-        ID3D11Buffer* vertexBuffers[] = {m_cubeVertexBuffer.Get()};
-        m_deviceContext->IASetVertexBuffers(0, (UINT)ArraySize(vertexBuffers), vertexBuffers, strides, offsets);
-        m_deviceContext->IASetIndexBuffer(m_cubeIndexBuffer.Get(), DXGI_FORMAT_R16_UINT, 0);
-        m_deviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        m_deviceContext->IASetInputLayout(m_inputLayout.Get());
-
-        // Render each cube
-        for (const Cube& cube : cubes) {
-            // Compute and update the model transform.
-            ModelConstantBuffer model;
-            XMStoreFloat4x4(&model.Model,
-                            XMMatrixTranspose(XMMatrixScaling(cube.Scale.x, cube.Scale.y, cube.Scale.z) * LoadXrPose(cube.Pose)));
-            m_deviceContext->UpdateSubresource(m_modelCBuffer.Get(), 0, nullptr, &model, 0, 0);
-
-            // Draw the cube.
-            m_deviceContext->DrawIndexed((UINT)ArraySize(Geometry::c_cubeIndices), 0, 0);
-        }
+        return swapchainTextures;
     }
 
    private:
-    ComPtr<ID3D11Device> m_device;
-    ComPtr<ID3D11DeviceContext> m_deviceContext;
-    XrGraphicsBindingD3D11KHR m_graphicsBinding{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR};
-    std::list<std::vector<XrSwapchainImageD3D11KHR>> m_swapchainImageBuffers;
-    ComPtr<ID3D11VertexShader> m_vertexShader;
-    ComPtr<ID3D11PixelShader> m_pixelShader;
-    ComPtr<ID3D11InputLayout> m_inputLayout;
-    ComPtr<ID3D11Buffer> m_modelCBuffer;
-    ComPtr<ID3D11Buffer> m_viewProjectionCBuffer;
-    ComPtr<ID3D11Buffer> m_cubeVertexBuffer;
-    ComPtr<ID3D11Buffer> m_cubeIndexBuffer;
+    RefCntAutoPtr<IRenderDeviceD3D11> m_device;
+    RefCntAutoPtr<IDeviceContext> m_immediateContext;
 
-    // Map color buffer to associated depth buffer. This map is populated on demand.
-    std::map<ID3D11Texture2D*, ComPtr<ID3D11DepthStencilView>> m_colorToDepthMap;
+    XrGraphicsBindingD3D11KHR m_d3d11GraphicsBinding{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR};
+    std::vector<int64_t> m_supportedColorFormats;
 };
 }  // namespace
 
-std::shared_ptr<IGraphicsPlugin> CreateGraphicsPlugin_D3D11(const std::shared_ptr<Options>& options,
-                                                            std::shared_ptr<IPlatformPlugin> platformPlugin) {
-    return std::make_shared<D3D11GraphicsPlugin>(options, platformPlugin);
-}
+std::unique_ptr<IGraphicsInterop> TryCreateD3D11Interop(XrInstance instance, XrSystemId systemId) {
+    PFN_xrGetD3D11GraphicsRequirementsKHR pfnGetD3D11GraphicsRequirementsKHR = nullptr;
+    HXR_CHECK_XRCMD(xrGetInstanceProcAddr(instance, "xrGetD3D11GraphicsRequirementsKHR",
+                                          reinterpret_cast<PFN_xrVoidFunction*>(&pfnGetD3D11GraphicsRequirementsKHR)));
 
+    XrGraphicsRequirementsD3D11KHR graphicsRequirements{XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR};
+    HXR_CHECK_XRCMD(pfnGetD3D11GraphicsRequirementsKHR(instance, systemId, &graphicsRequirements));
+
+#if ENGINE_DLL
+    GetEngineFactoryD3D11Type GetEngineFactoryD3D11 = LoadGraphicsEngineD3D11();
+#endif
+
+    EngineD3D11CreateInfo EngineCI;
+    // TODO: EngineCI.AdapterId = graphicsRequirements.adapterLuid;
+    // TODO: EngineCI.MinimumFeatureLevel = graphicsRequirements.minFeatureLevel;
+
+#if !defined(NDEBUG)
+    EngineCI.DebugFlags |= D3D11_DEBUG_FLAG_CREATE_DEBUG_DEVICE | D3D11_DEBUG_FLAG_VERIFY_COMMITTED_SHADER_RESOURCES;
+#endif
+
+    IEngineFactoryD3D11* factoryD3D11 = GetEngineFactoryD3D11();
+    RefCntAutoPtr<IRenderDevice> device;
+    RefCntAutoPtr<IDeviceContext> immediateContext;
+    factoryD3D11->CreateDeviceAndContextsD3D11(EngineCI, &device, &immediateContext);
+    if (!device || !immediateContext) {
+        return nullptr;
+    }
+
+    return std::make_unique<D3D11GraphicsInterop>(device.Cast<IRenderDeviceD3D11>(IID_RenderDeviceD3D11), immediateContext);
+}
+#endif
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#if defined(XR_USE_GRAPHICS_API_D3D12)
+namespace {
+struct D3D12GraphicsInterop : IGraphicsInterop {
+    D3D12GraphicsInterop(RefCntAutoPtr<IRenderDeviceD3D12> device, RefCntAutoPtr<IDeviceContextD3D12> immediateContext)
+        : m_device(device), m_immediateContext(immediateContext) {
+        m_d3D12GraphicsBinding.device = m_device->GetD3D12Device();
+
+        // Diligent requires the caller to lock the queue mutex to get access to the command queue, but we ensure there are no
+        // simultaneous access, so we can cache it and unlock.
+        m_d3D12GraphicsBinding.queue = m_immediateContext->LockCommandQueue()->GetD3D12CommandQueue();
+        m_immediateContext->UnlockCommandQueue();
+
+        m_supportedColorFormats = {
+            DXGI_FORMAT_R8G8B8A8_UNORM,
+            DXGI_FORMAT_B8G8R8A8_UNORM,
+            DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+            DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
+        };
+    }
+
+    IRenderDevice* RenderDevice() override { return m_device; }
+    IDeviceContext* ImmediateContext() override { return m_immediateContext; }
+
+    std::vector<int64_t> SupportedColorFormats() const override { return m_supportedColorFormats; }
+
+    const XrBaseInStructure* GetSessionGraphicsBinding() const override {
+        return reinterpret_cast<const XrBaseInStructure*>(&m_d3D12GraphicsBinding);
+    }
+
+    TEXTURE_FORMAT GetTextureFormat(uint64_t nativeFormat) const override {
+        return DXGI_FormatToTexFormat((DXGI_FORMAT)nativeFormat);
+    }
+
+    std::vector<RefCntAutoPtr<ITexture>> GetSwapchainTextures(XrSwapchain swapchain, const XrSwapchainCreateInfo&) override {
+        std::vector<XrSwapchainImageD3D12KHR> swapchainImages =
+            GetSwapchainImages<XrSwapchainImageD3D12KHR, XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR>(swapchain);
+
+        std::vector<RefCntAutoPtr<ITexture>> swapchainTextures;
+        for (const XrSwapchainImageD3D12KHR& swapchainImage : swapchainImages) {
+            RefCntAutoPtr<ITexture> swapchainTexture;
+            m_device.RawPtr<IRenderDeviceD3D12>()->CreateTextureFromD3DResource(swapchainImage.texture, RESOURCE_STATE_UNDEFINED,
+                                                                                &swapchainTexture);
+            swapchainTextures.emplace_back(swapchainTexture);
+        }
+
+        return swapchainTextures;
+    }
+
+   private:
+    RefCntAutoPtr<IRenderDeviceD3D12> m_device;
+    RefCntAutoPtr<IDeviceContextD3D12> m_immediateContext;
+
+    XrGraphicsBindingD3D12KHR m_d3D12GraphicsBinding{XR_TYPE_GRAPHICS_BINDING_D3D12_KHR};
+    std::vector<int64_t> m_supportedColorFormats;
+};
+}  // namespace
+
+std::unique_ptr<IGraphicsInterop> TryCreateD3D12Interop(XrInstance instance, XrSystemId systemId) {
+    PFN_xrGetD3D12GraphicsRequirementsKHR pfnGetD3D12GraphicsRequirementsKHR = nullptr;
+    HXR_CHECK_XRCMD(xrGetInstanceProcAddr(instance, "xrGetD3D12GraphicsRequirementsKHR",
+                                          reinterpret_cast<PFN_xrVoidFunction*>(&pfnGetD3D12GraphicsRequirementsKHR)));
+
+    XrGraphicsRequirementsD3D12KHR graphicsRequirements{XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR};
+    HXR_CHECK_XRCMD(pfnGetD3D12GraphicsRequirementsKHR(instance, systemId, &graphicsRequirements));
+
+#if ENGINE_DLL
+    GetEngineFactoryD3D12Type GetEngineFactoryD3D12 = LoadGraphicsEngineD3D12();
+#endif
+
+    EngineD3D12CreateInfo EngineCI;
+    // TODO: EngineCI.AdapterId = graphicsRequirements.adapterLuid;
+    // TODO: EngineCI.MinimumFeatureLevel = graphicsRequirements.minFeatureLevel;
+#if !defined(NDEBUG)
+    EngineCI.EnableDebugLayer = true;
+#endif
+
+    IEngineFactoryD3D12* factoryD3D12 = GetEngineFactoryD3D12();
+    RefCntAutoPtr<IRenderDevice> device;
+    RefCntAutoPtr<IDeviceContext> immediateContext;
+    factoryD3D12->CreateDeviceAndContextsD3D12(EngineCI, &device, &immediateContext);
+    if (!device || !immediateContext) {
+        return nullptr;
+    }
+
+    return std::make_unique<D3D12GraphicsInterop>(device.Cast<IRenderDeviceD3D12>(IID_RenderDeviceD3D12),
+                                                  immediateContext.Cast<IDeviceContextD3D12>(IID_DeviceContextD3D12));
+}
+#endif
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#if 0 // defined(XR_USE_GRAPHICS_API_VULKAN)
+// 
+namespace {
+struct VulkanGraphicsInterop : IGraphicsInterop {
+    VulkanGraphicsInterop(RefCntAutoPtr<IRenderDeviceVk> device, RefCntAutoPtr<IDeviceContextVk> immediateContext)
+        : m_device(device), m_immediateContext(immediateContext) {
+        m_vulkanGraphicsBinding.physicalDevice = m_device->GetVkPhysicalDevice();
+        m_vulkanGraphicsBinding.device = m_device->GetVkDevice();
+        m_vulkanGraphicsBinding.instance = m_device->GetVkInstance();
+
+        // Diligent requires the caller to lock the queue mutex to get access to the command queue, but we ensure there are no
+        // simultaneous access, so we can cache it and unlock.
+        ICommandQueueVk* commandQueue = m_immediateContext->LockCommandQueue();
+        m_vulkanGraphicsBinding.queueFamilyIndex = commandQueue->GetQueueFamilyIndex();
+
+        // TODO: Need to find index of queue
+        m_vulkanGraphicsBinding.queueIndex = 0;  // commandQueue->GetVkQueue();
+        m_immediateContext->UnlockCommandQueue();
+
+        m_supportedColorFormats = {VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_B8G8R8A8_UNORM,
+                                   VK_FORMAT_R8G8B8A8_UNORM};
+    }
+
+    IRenderDevice* RenderDevice() override { return m_device; }
+    IDeviceContext* ImmediateContext() override { return m_immediateContext; }
+
+    std::vector<int64_t> SupportedColorFormats() const override { return m_supportedColorFormats; }
+
+    const XrBaseInStructure* GetSessionGraphicsBinding() const override {
+        return reinterpret_cast<const XrBaseInStructure*>(&m_vulkanGraphicsBinding);
+    }
+
+    TEXTURE_FORMAT GetTextureFormat(uint64_t nativeFormat) const override { return VkFormatToTexFormat((VkFormat)nativeFormat); }
+
+    std::vector<RefCntAutoPtr<ITexture>> GetSwapchainTextures(XrSwapchain swapchain,
+                                                              const XrSwapchainCreateInfo& createInfo) override {
+        std::vector<XrSwapchainImageVulkanKHR> swapchainImages =
+            GetSwapchainImages<XrSwapchainImageVulkanKHR, XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR>(swapchain);
+
+        std::vector<RefCntAutoPtr<ITexture>> swapchainTextures;
+        for (const XrSwapchainImageVulkanKHR& swapchainImage : swapchainImages) {
+            RefCntAutoPtr<ITexture> swapchainTexture;
+            Diligent::TextureDesc imageDesc;
+            imageDesc.Type = RESOURCE_DIM_TEX_2D;
+            imageDesc.Format = GetTextureFormat(createInfo.format);
+            imageDesc.Width = createInfo.width;
+            imageDesc.Height = createInfo.height;
+            imageDesc.ArraySize = createInfo.arraySize;
+            imageDesc.MipLevels = createInfo.mipCount;
+            imageDesc.SampleCount = createInfo.sampleCount;
+
+            if (createInfo.usageFlags & XR_SWAPCHAIN_USAGE_SAMPLED_BIT) {
+                imageDesc.BindFlags |= BIND_SHADER_RESOURCE;
+            }
+            if (createInfo.usageFlags & XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT) {
+                imageDesc.BindFlags |= BIND_RENDER_TARGET;
+            }
+            if (createInfo.usageFlags & XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+                imageDesc.BindFlags |= BIND_DEPTH_STENCIL;
+            }
+            if (createInfo.usageFlags & XR_SWAPCHAIN_USAGE_UNORDERED_ACCESS_BIT) {
+                imageDesc.BindFlags |= BIND_UNORDERED_ACCESS;
+            }
+
+            m_device.RawPtr<IRenderDeviceVk>()->CreateTextureFromVulkanImage(swapchainImage.image, imageDesc,
+                                                                             RESOURCE_STATE_UNDEFINED, &swapchainTexture);
+            swapchainTextures.emplace_back(swapchainTexture);
+        }
+
+        return swapchainTextures;
+    }
+
+   private:
+    RefCntAutoPtr<IRenderDeviceVk> m_device;
+    RefCntAutoPtr<IDeviceContextVk> m_immediateContext;
+
+    XrGraphicsBindingVulkanKHR m_vulkanGraphicsBinding{XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR};
+    std::vector<int64_t> m_supportedColorFormats;
+};
+}  // namespace
+
+std::unique_ptr<IGraphicsInterop> TryCreateVulkanInterop(XrInstance /*instance*/, XrSystemId /*systemId*/) {
+    // PFN_xrGetVulkanGraphicsRequirementsKHR pfnGetVulkanGraphicsRequirementsKHR = nullptr;
+    // HXR_CHECK_XRCMD(xrGetInstanceProcAddr(instance, "xrGetVulkanGraphicsRequirementsKHR",
+    //                                       reinterpret_cast<PFN_xrVoidFunction*>(&pfnGetVulkanGraphicsRequirementsKHR)));
+    // XrGraphicsRequirementsVulkanKHR graphicsRequirements{XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR};
+    // HXR_CHECK_XRCMD(pfnGetVulkanGraphicsRequirementsKHR(instance, systemId, &graphicsRequirements));
+
+#if ENGINE_DLL
+    GetEngineFactoryVkType GetEngineFactoryVulkan = LoadGraphicsEngineVk();
+#endif
+
+    EngineVkCreateInfo EngineCI;
+    // TODO: EngineCI.AdapterId = graphicsRequirements.adapterLuid;
+#if !defined(NDEBUG)
+    EngineCI.EnableValidation = true;
+#endif
+
+    IEngineFactoryVk* factoryVulkan = GetEngineFactoryVulkan();
+    RefCntAutoPtr<IRenderDevice> device;
+    RefCntAutoPtr<IDeviceContext> immediateContext;
+    /* TODO: Must use AttachToVulkanDevice(std::shared_ptr<VulkanUtilities::VulkanInstance> Instance,
+                                                         std::unique_ptr<VulkanUtilities::VulkanPhysicalDevice> PhysicalDevice,
+                                                         std::shared_ptr<VulkanUtilities::VulkanLogicalDevice> LogicalDevice,
+                                                         size_t CommandQueueCount, ICommandQueueVk * *ppCommandQueues,
+                                                         const EngineVkCreateInfo& EngineCI, IRenderDevice** ppDevice,
+                                                         IDeviceContext** ppContexts);  // override final;
+                                                         */
+    factoryVulkan->CreateDeviceAndContextsVk(EngineCI, &device, &immediateContext);
+    // factoryVulkan->Attach
+    if (!device || !immediateContext) {
+        return nullptr;
+    }
+
+    return std::make_unique<VulkanGraphicsInterop>(device.Cast<IRenderDeviceVk>(IID_RenderDeviceVk),
+                                                   immediateContext.Cast<IDeviceContextVk>(IID_DeviceContextVk));
+}
 #endif

@@ -9,7 +9,7 @@
 #ifdef XR_USE_PLATFORM_WIN32
 namespace {
 struct Win32PlatformPlugin : public IPlatformPlugin {
-    Win32PlatformPlugin(const std::shared_ptr<Options>&) { CHECK_HRCMD(CoInitializeEx(nullptr, COINIT_MULTITHREADED)); }
+    Win32PlatformPlugin(const std::shared_ptr<Options>&) { HXR_CHECK_HRCMD(CoInitializeEx(nullptr, COINIT_MULTITHREADED)); }
 
     virtual ~Win32PlatformPlugin() { CoUninitialize(); }
 

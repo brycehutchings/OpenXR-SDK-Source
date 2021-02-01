@@ -22,13 +22,13 @@
 }
 
 #define THROW(msg) Throw(msg, nullptr, FILE_AND_LINE);
-#define CHECK(exp)                                      \
+#define HXR_CHECK(exp)                                      \
     {                                                   \
         if (!(exp)) {                                   \
             Throw("Check failed", #exp, FILE_AND_LINE); \
         }                                               \
     }
-#define CHECK_MSG(exp, msg)                  \
+#define HXR_CHECK_MSG(exp, msg)                  \
     {                                        \
         if (!(exp)) {                        \
             Throw(msg, #exp, FILE_AND_LINE); \
@@ -47,9 +47,9 @@ inline XrResult CheckXrResult(XrResult res, const char* originator = nullptr, co
     return res;
 }
 
-#define THROW_XR(xr, cmd) ThrowXrResult(xr, #cmd, FILE_AND_LINE);
-#define CHECK_XRCMD(cmd) CheckXrResult(cmd, #cmd, FILE_AND_LINE);
-#define CHECK_XRRESULT(res, cmdStr) CheckXrResult(res, cmdStr, FILE_AND_LINE);
+#define HXR_THROW_XR(xr, cmd) ThrowXrResult(xr, #cmd, FILE_AND_LINE);
+#define HXR_CHECK_XRCMD(cmd) CheckXrResult(cmd, #cmd, FILE_AND_LINE);
+#define HXR_CHECK_XRRESULT(res, cmdStr) CheckXrResult(res, cmdStr, FILE_AND_LINE);
 
 #ifdef XR_USE_PLATFORM_WIN32
 
@@ -66,7 +66,7 @@ inline HRESULT CheckHResult(HRESULT hr, const char* originator = nullptr, const 
 }
 
 #define THROW_HR(hr, cmd) ThrowHResult(hr, #cmd, FILE_AND_LINE);
-#define CHECK_HRCMD(cmd) CheckHResult(cmd, #cmd, FILE_AND_LINE);
+#define HXR_CHECK_HRCMD(cmd) CheckHResult(cmd, #cmd, FILE_AND_LINE);
 #define CHECK_HRESULT(res, cmdStr) CheckHResult(res, cmdStr, FILE_AND_LINE);
 
 #endif

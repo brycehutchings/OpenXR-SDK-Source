@@ -37,12 +37,5 @@ struct IOpenXrProgram {
     virtual void RenderFrame() = 0;
 };
 
-struct Swapchain {
-    XrSwapchain handle;
-    int32_t width;
-    int32_t height;
-};
-
 std::shared_ptr<IOpenXrProgram> CreateOpenXrProgram(const std::shared_ptr<Options>& options,
-                                                    const std::shared_ptr<IPlatformPlugin>& platformPlugin,
-                                                    const std::shared_ptr<IGraphicsPlugin>& graphicsPlugin);
+                                                    const std::shared_ptr<IPlatformPlugin>& platformPlugin);

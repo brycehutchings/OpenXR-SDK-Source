@@ -104,11 +104,12 @@ if(NOT ANDROID)
 endif()
 
 target_compile_options(hello_xr PRIVATE -DUNICODE -DENGINE_DLL)
-target_include_directories(hello_xr PRIVATE "DiligentCore")
+target_include_directories(hello_xr PRIVATE ${PROJECT_SOURCE_DIR}/DiligentEngine/DiligentCore)
 target_link_libraries(hello_xr
-    Diligent-GraphicsEngineD3D11-shared
-    Diligent-GraphicsEngineOpenGL-shared
-    Diligent-GraphicsEngineD3D12-shared
-    Diligent-GraphicsEngineVk-shared
+    Diligent-GraphicsEngineD3DBase
+    Diligent-GraphicsEngineD3D11-static
+    Diligent-GraphicsEngineD3D12-static
+    Diligent-GraphicsEngineOpenGL-static
+    Diligent-GraphicsEngineVk-static
 )
 copy_required_dlls(hello_xr)

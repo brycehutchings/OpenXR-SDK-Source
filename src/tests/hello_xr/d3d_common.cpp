@@ -52,15 +52,15 @@ ComPtr<ID3DBlob> CompileShader(const char* hlsl, const char* entrypoint, const c
 ComPtr<IDXGIAdapter1> GetAdapter(LUID adapterId) {
     // Create the DXGI factory.
     ComPtr<IDXGIFactory1> dxgiFactory;
-    CHECK_HRCMD(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(dxgiFactory.ReleaseAndGetAddressOf())));
+    HXR_CHECK_HRCMD(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(dxgiFactory.ReleaseAndGetAddressOf())));
 
     for (UINT adapterIndex = 0;; adapterIndex++) {
         // EnumAdapters1 will fail with DXGI_ERROR_NOT_FOUND when there are no more adapters to enumerate.
         ComPtr<IDXGIAdapter1> dxgiAdapter;
-        CHECK_HRCMD(dxgiFactory->EnumAdapters1(adapterIndex, dxgiAdapter.ReleaseAndGetAddressOf()));
+        HXR_CHECK_HRCMD(dxgiFactory->EnumAdapters1(adapterIndex, dxgiAdapter.ReleaseAndGetAddressOf()));
 
         DXGI_ADAPTER_DESC1 adapterDesc;
-        CHECK_HRCMD(dxgiAdapter->GetDesc1(&adapterDesc));
+        HXR_CHECK_HRCMD(dxgiAdapter->GetDesc1(&adapterDesc));
         if (memcmp(&adapterDesc.AdapterLuid, &adapterId, sizeof(adapterId)) == 0) {
             Log::Write(Log::Level::Verbose, Fmt("Using graphics adapter %ws", adapterDesc.Description));
             return dxgiAdapter;
